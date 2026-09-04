@@ -1,0 +1,238 @@
+# Transcriber TUI — Design Spec
+
+Status: approved design pending build · 2026-09-03
+Pipeline context: [README.md](README.md)
+
+## Problem
+
+Speaker labeling was a guess-rename-rerun loop. We want an interactive pass
+over what was actually said — preview utterances, fix who said them — without
+scrolling through an hour of transcript inside a TUI.
+
+## Direction
+
+Single-file, zero-dependency Bun script `transcribe.ts` in this folder:
+
+```
+bun transcribe.ts <recording>          # full pipeline + labeling TUI
+bun transcribe.ts <recording> --no-tui # headless: apply sidecar, emit outputs (agent path)
+```
+
+1. Missing `.asr.json` / `.diar.json` → runs the FluidAudio CLI steps with
+   streamed progress. Existing JSONs → opens the TUI instantly (no re-inference).
+2. Full-screen labeling TUI (states below).
+3. `s` → emits `.srt`, `.vtt`, `.md` + `<base>.labels.json` sidecar next to
+   the recording.
+4. The zsh `transcribe()` function becomes a thin wrapper around the bun script.
+
+**Every TUI operation is a pure label transform.** ASR and diarization results
+are never recomputed.
+
+## Architecture (one file, ~700 lines)
+
+| Module    | Responsibility |
+|-----------|----------------|
+| pipeline  | ensure JSONs (spawn CLI, stream progress), parse, build utterances |
+| state     | label mappings, utterance overrides, undo stack, dirty flag |
+| render    | pure `state → string` per screen state; full redraw per keypress |
+| input     | raw-mode keypress parser (arrows, Enter, Esc, chars, ctrl-c) |
+| save      | regroup words → SRT/VTT/MD/sidecar |
+| main      | orchestration + flags |
+
+Runs in alt-screen with raw mode. Requires ≥80×24 terminal. ANSI 16-color safe.
+
+## Data model
+
+- **Canonical speaker id** = the raw `speakerId` from `diar.json`
+  (e.g. `SPEAKER_00`) — stable across all label operations.
+- **Display name** per speaker: user-assigned name, else `S<rank>` by first
+  appearance (deterministic). Cards show `S2 Ada`; unnamed shows `S2 ?`.
+- **Utterance** = maximal run of same-speaker words (gap split: silence > 1.0s).
+  Built from `wordTimings` via max-overlap assignment (nearest within 2.0s cap
+  for orphans), as in `merge_transcript.py`.
+- **Reassign** applies to the utterance as a unit. Utterances are keyed by the
+  index of their first word in `wordTimings` (stable under regrouping).
+  **Grouping recomputes live** after every reassign, so a run like
+  S1→S2→S1 fuses when the middle utterance is reassigned to S1 — the transcript
+  always shows the truth. Undo covers surprises.
+- **Undo** = snapshot stack (names + overrides), capped at 50. `u` pops.
+
+### Sidecar `<base>.labels.json`
+
+```json
+{
+  "audio": "meeting.mp4",
+  "names": { "SPEAKER_00": "Nathan", "SPEAKER_01": "Ada" },
+  "overrides": { "42": "SPEAKER_01" },
+  "saved": "2026-09-03T20:55:00Z"
+}
+```
+
+Re-opening a meeting loads the sidecar and replays it — relabeling never
+re-runs inference. `--no-tui` applies the sidecar and emits outputs directly.
+
+## Screen states (example terminal renders)
+
+### 1. Speaker screen — idle
+
+```
+┌ meeting.mp4 · 32:14 · 3 speakers · unlabeled 2 ────────────── ● unsaved ┐
+│                                                                         │
+│ ▸ S1  Nathan     ██████████████░░░░░░░░░  12:03 (53%)                   │
+│       14 utts · first 00:00 · last 31:20                                │
+│       "thanks everyone for hopping on, I know it's early…"              │
+│       "let me pull up the roadmap for Q4…"                              │
+│                                                                         │
+│   S2  ?          █████████░░░░░░░░░░░░░░  08:41 (38%)                   │
+│       11 utts · first 00:12 · last 29:55                                │
+│       "sure, I'll take the first item on the agenda…"                   │
+│       "we should sync with the client before…                           │
+│                                                                         │
+│   S3  ?          ███████░░░░░░░░░░░░░░░░  06:12 (27%)                   │
+│       7 utts · first 12:40 · last 30:58                                 │
+│       "yeah I think that makes sense, but have we…"                     │
+│       "I can own the follow-ups for the…                                │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ↑↓ select · r rename · m merge · ⏎ audit · u undo · s save · q quit     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Card fields: rank + display name · proportional talk-time bar · total talk
+time and % of speech · utterance count · first/last timestamps · two snippets
+(**first utterance** as temporal anchor + **longest** as most characteristic;
+deduped; one snippet if the speaker has only one). Truncated to terminal width.
+
+### 2. Speaker screen — rename prompt (inline under selected card)
+
+```
+ ▸ S2  ?          █████████░░░░░░░░░░░░░░  08:41 (38%)
+       11 utts · first 00:12 · last 29:55
+       "sure, I'll take the first item on the agenda…"
+       rename S2 → Ada█
+       (Enter confirm · Esc cancel)
+```
+
+Pre-filled with the current name (empty if `?`); typing replaces it.
+
+### 3. Speaker screen — merge picker (inline under selected card)
+
+```
+ ▸ S3  ?          ███████░░░░░░░░░░░░░░░░  06:12 (27%)
+       merge S3 into:
+       ▸ S1  Nathan
+         S2  Ada
+       (↑↓ + Enter · Esc cancel)
+```
+
+Lists other speakers only. Enter merges immediately (all S3 utterances become
+S1's; snippets, bar, and counts recompute; undo restores).
+
+### 4. Audit screen — idle (Enter from speaker screen)
+
+```
+┌ S1 Nathan · 14 utterances · 12:03 talk ────────────────────── ● unsaved ┐
+│                                                                         │
+│ ▸ [00:00] thanks everyone for hopping on, I know it's early, so…        │
+│   [02:14] so first item — the roadmap review. I'll go ahead and…        │
+│   [08:12] let me pull up the roadmap. Q4 is really where…               │
+│   [11:03] right, and the follow-up from last week…                      │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ ↑↓ select · v expand · a reassign · Esc back · u undo                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+One line per utterance — 14 utterances ≈ 14 rows, no scrolling for most
+speakers. Scrolls only when a speaker genuinely has more utterances than fit.
+
+### 5. Audit — expanded utterance (v toggles the cursor utterance)
+
+```
+ ▸ [00:00] thanks everyone for hopping on, I know it's early, so I
+           wanted to get straight into the roadmap before we lose the
+           room. first item is the Q4 review — I'll go fast.
+   [02:14] so first item — the roadmap review. I'll go ahead and…
+```
+
+### 6. Audit — reassign picker (a; inline under cursor utterance)
+
+```
+ ▸ [02:14] so first item — the roadmap review. I'll go ahead and…
+   reassign to:
+   ▸ S2  Ada
+     S3  ?
+   (↑↓ + Enter · Esc cancel)
+```
+
+Lists other speakers only. Enter applies and the utterance list regroups live
+(neighboring same-speaker utterances fuse).
+
+### 7. Save + exit (s → back to the normal terminal)
+
+```
+Saved:
+  meeting.srt · meeting.vtt · meeting.md · meeting.labels.json
+  3 speakers: S1 Nathan · S2 Ada · S3 ?
+Reopen anytime:  bun transcribe.ts meeting.mp4   (instant — reuses cached JSONs)
+```
+
+Outputs use display names where set, else `S<rank>`; unnamed speakers render
+as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
+`save before quitting? (y/n)`.
+
+### Pipeline progress (only when JSONs are missing)
+
+```
+[1/3] ASR (Parakeet TDT v2, English)…        done in 9.8s (196x realtime)
+[2/3] diarization (offline VBx)…             done in 41.2s
+[3/3] opening labeling TUI…
+```
+
+### Error states (plain terminal, exit 1)
+
+- file not found / unreadable → `transcribe: <path>: not found`
+- diarization `noSpeechDetected` → `transcribe: no speech detected in <path>`
+- missing CLI binary → `transcribe: fluidaudiocli not built — see README "Setup"`
+
+## Keybindings summary
+
+| Screen  | Key | Action |
+|---------|-----|--------|
+| both    | ↑/↓ or j/k | move cursor |
+| both    | u | undo |
+| both    | ctrl-c | quit (asks if unsaved) |
+| speaker | r | rename selected speaker |
+| speaker | m | merge selected speaker into… |
+| speaker | ⏎ | audit selected speaker |
+| speaker | s | save all outputs |
+| speaker | q | quit |
+| audit   | v | expand/collapse cursor utterance |
+| audit   | a | reassign cursor utterance to… |
+| audit   | Esc | back to speaker screen |
+| pickers | ↑/↓, Enter, Esc | navigate, confirm, cancel |
+| prompts | chars, ⌫, Enter, Esc | edit, confirm, cancel |
+
+## Output formats
+
+Unchanged from `merge_transcript.py` (SRT cues per utterance, WebVTT header +
+cues, Markdown linear log with `[MM:SS] label:` bullets and speaker legend).
+The TUI script ports that logic; `merge_transcript.py` stays as the headless
+fallback and is superseded for interactive use.
+
+## Assumptions to validate in pilot
+
+- [ ] Speaker count stays small (2–8) — cards fit one screen without scrolling
+- [ ] rename + merge + reassign cover the real labeling workload
+- [ ] raw-ANSI rendering is stable in the user's terminal (Ghostty/iTerm/tmux)
+- [ ] sidecar reuse makes reopen-and-relabel instant in practice
+
+## Not doing (v1)
+
+- **Snippet playback** — extra moving parts (ffmpeg trim → afplay); snippets +
+  audit suffice when you were in the room. Revisit if the pilot proves otherwise
+- **ASR text editing** — word-timing/merging complexity for marginal gain (2.1% WER)
+- **Word-level reassignment** — utterance-level covers the realistic fix
+- **Cross-recording speaker memory** — each meeting labels fresh
+- **ink/blessed/terminal-kit** — zero-dep keeps it one file and install-free
+- **Mouse support**

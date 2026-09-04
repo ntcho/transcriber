@@ -1,0 +1,22 @@
+# Generated transcript artifacts
+*.asr.json
+*.diar.json
+*.labels.json
+*.srt
+*.vtt
+*.md
+!README.md
+!SPEC.md
+
+# Source recordings should stay outside the repository.
+*.mp4
+*.mov
+*.m4a
+*.wav
+
+# Local-only files
+.DS_Store
+__pycache__/
+.env
+.env.*
+!.env.example
