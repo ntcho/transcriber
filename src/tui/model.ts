@@ -93,7 +93,19 @@ export class LabelSession {
 
   /** Apply a changed label and retain a bounded snapshot for undo. */
   apply(action: LabelAction): boolean {
-    const next = applyLabelAction(this.current, action, this.utterances);
+    return this.applyMany([action]);
+  }
+
+  /** Apply a sequence of related label changes as one undoable operation. */
+  applyMany(actions: LabelAction[]): boolean {
+    let next = this.current;
+    for (const action of actions) {
+      next = applyLabelAction(
+        next,
+        action,
+        buildUtterances(this.meeting.words, this.meeting.segments, next.overrides),
+      );
+    }
     if (labelStatesEqual(next, this.current)) return false;
     this.history.push(cloneState(this.current));
     if (this.history.length > UNDO_LIMIT) this.history.shift();

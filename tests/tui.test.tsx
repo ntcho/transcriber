@@ -55,6 +55,27 @@ function longFixture(): MeetingData {
   return meeting;
 }
 
+function paragraphFixture(): MeetingData {
+  const meeting = fixture();
+  meeting.words = [
+    { word: "first", startTime: 0, endTime: 0.4 },
+    { word: "paragraph", startTime: 0.2, endTime: 0.6 },
+    { word: "has", startTime: 0.4, endTime: 0.8 },
+    { word: "enough", startTime: 0.6, endTime: 1 },
+    { word: "words", startTime: 0.8, endTime: 1.2 },
+    { word: "second", startTime: 2.5, endTime: 2.9 },
+    { word: "other", startTime: 4.5, endTime: 4.9 },
+    { word: "last", startTime: 6.5, endTime: 6.9 },
+  ];
+  meeting.segments = [
+    { speakerId: "SPEAKER_00", start: 0, end: 1.3 },
+    { speakerId: "SPEAKER_00", start: 2.5, end: 3 },
+    { speakerId: "SPEAKER_01", start: 4.5, end: 5 },
+    { speakerId: "SPEAKER_00", start: 6.5, end: 7 },
+  ];
+  return meeting;
+}
+
 describe("OpenTUI speaker labeling tree", () => {
   it("renders ranked speaker fields in the overview", async () => {
     const setup = await createTestRenderer({ width: 100, height: 24 });
@@ -248,6 +269,46 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.flush();
       await setup.renderOnce();
       expect(await setup.waitForFrame((current) => current.includes("Right audit") && !current.includes("reassign to:"))).toContain("Right audit");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("renders, expands, and reassigns audit paragraphs atomically", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 10 });
+    const keymap = createDefaultOpenTuiKeymap(setup.renderer);
+    const session = new LabelSession(paragraphFixture());
+    try {
+      await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
+      await setup.renderOnce();
+      await setup.mockInput.pressArrow("right");
+      await setup.flush();
+      const collapsed = await setup.waitForFrame((frame) => frame.includes("[00:00]"));
+
+      expect(collapsed).toContain("2 paragraphs");
+      expect(collapsed).toContain("[00:00] first paragraph");
+      expect(collapsed).not.toContain("[00:02]");
+      expect(collapsed).toContain("[00:06] last");
+      expect(collapsed).not.toContain("second");
+
+      await setup.mockInput.pressEnter();
+      await setup.flush();
+      const expanded = await setup.waitForFrame((frame) => frame.includes("second"));
+      expect(expanded).toContain("second");
+
+      await setup.mockInput.pressKey("a");
+      await setup.flush();
+      await setup.mockInput.pressEnter();
+      await setup.flush();
+      const reassigned = await setup.waitForFrame((frame) => frame.includes("[00:06] last"));
+      expect(reassigned).toContain("[00:06] last");
+      expect(session.state.overrides).toEqual(new Map([[0, "SPEAKER_01"], [5, "SPEAKER_01"]]));
+
+      await setup.mockInput.pressKey("u");
+      await setup.flush();
+      const undone = await setup.waitForFrame((frame) => frame.includes("[00:00] first paragraph"));
+      expect(undone).toContain("[00:00] first paragraph");
+      expect(session.state.overrides).toEqual(new Map());
     } finally {
       setup.renderer.destroy();
     }

@@ -57,21 +57,31 @@ The system SHALL allow a user to rename the selected speaker by pressing Enter, 
 - **WHEN** a user selects a speaker, chooses another speaker as the merge target, and confirms with Enter
 - **THEN** all utterances assigned to the selected speaker are assigned to the target, affected summaries and snippets recompute, and the operation can be undone
 
-### Requirement: Audit and reassign utterances
+### Requirement: Audit and reassign transcript paragraphs
 
-The system SHALL display one row per utterance in audit view, support expanding and collapsing the selected utterance, and allow the selected utterance to be reassigned to another speaker. Reassignment SHALL regroup neighboring same-speaker utterances when applicable and SHALL update the audit view live.
+The system SHALL display one row per maximal consecutive run of current utterances belonging to the selected speaker in audit view, using the first utterance's timestamp and joining the run's text with single spaces. It SHALL support expanding and collapsing the selected paragraph, and SHALL allow the selected paragraph to be reassigned to another speaker. Reassignment SHALL apply to every source utterance in the paragraph, regroup neighboring same-speaker utterances when applicable, and update the audit view live.
 
-#### Scenario: Expand an utterance
+#### Scenario: Group consecutive utterances into one audit paragraph
 
-- **WHEN** a user selects an utterance and presses Enter
-- **THEN** the utterance toggles between its collapsed single-line form and its wrapped expanded form
+- **WHEN** adjacent current utterances for the selected speaker have the same speaker identity
+- **THEN** the audit view shows one row for the group with the first timestamp and all text joined by single spaces
 
-#### Scenario: Reassign an utterance
+#### Scenario: Preserve paragraph boundaries
 
-- **WHEN** a user selects an utterance, opens the reassignment picker with `a`, chooses another speaker, and confirms with Enter
-- **THEN** the utterance is assigned to the target speaker, the visible utterance list regroups, and the session is marked unsaved
+- **WHEN** a different speaker occurs between two utterances from the selected speaker
+- **THEN** the audit view shows separate paragraphs in source order and does not join across that speaker boundary
 
-#### Scenario: Cancel a reassignment
+#### Scenario: Expand a paragraph
+
+- **WHEN** a user selects a paragraph and presses Enter
+- **THEN** the paragraph toggles between its collapsed single-line form and its wrapped expanded form
+
+#### Scenario: Reassign a paragraph
+
+- **WHEN** a user selects a paragraph, opens the reassignment picker with `a`, chooses another speaker, and confirms with Enter
+- **THEN** every source utterance in the paragraph is assigned to the target speaker, the visible paragraph list regroups, and the session is marked unsaved
+
+#### Scenario: Cancel a paragraph reassignment
 
 - **WHEN** a user opens the reassignment picker and presses Escape
 - **THEN** no speaker assignment changes

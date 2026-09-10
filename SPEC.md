@@ -134,7 +134,7 @@ S1's; snippets, bar, and counts recompute; undo restores).
 ### 4. Audit screen — idle (Right from speaker screen)
 
 ```
-┌ S1 Nathan · 14 utterances · 12:03 talk ────────────────────── ● unsaved ┐
+┌ S1 Nathan · 12 paragraphs · 12:03 talk ────────────────────── ● unsaved ┐
 │                                                                         │
 │ ▸ [00:00] thanks everyone for hopping on, I know it's early, so…        │
 │   [02:14] so first item — the roadmap review. I'll go ahead and…        │
@@ -146,10 +146,11 @@ S1's; snippets, bar, and counts recompute; undo restores).
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-One line per utterance — 14 utterances ≈ 14 rows, no scrolling for most
-speakers. Scrolls only when a speaker genuinely has more utterances than fit.
+One line per paragraph. Consecutive utterances from the same speaker are shown
+as one row, with the first timestamp and the text joined into one paragraph.
+Scrolls only when a speaker genuinely has more paragraphs than fit.
 
-### 5. Audit — expanded utterance (Enter toggles the cursor utterance)
+### 5. Audit — expanded paragraph (Enter toggles the cursor paragraph)
 
 ```
  ▸ [00:00] thanks everyone for hopping on, I know it's early, so I
@@ -158,7 +159,7 @@ speakers. Scrolls only when a speaker genuinely has more utterances than fit.
    [02:14] so first item — the roadmap review. I'll go ahead and…
 ```
 
-### 6. Audit — reassign picker (a; inline under cursor utterance)
+### 6. Audit — reassign picker (a; inline under cursor paragraph)
 
 ```
  ▸ [02:14] so first item — the roadmap review. I'll go ahead and…
@@ -168,8 +169,8 @@ speakers. Scrolls only when a speaker genuinely has more utterances than fit.
    (↑↓ + Enter · Esc cancel)
 ```
 
-Lists other speakers only. Enter applies and the utterance list regroups live
-(neighboring same-speaker utterances fuse).
+Lists other speakers only. Enter applies to every source utterance in the
+selected paragraph and the paragraph list regroups live.
 
 ### 7. Save + exit (s → back to the normal terminal)
 
@@ -213,8 +214,8 @@ as `?` in Markdown transcript paragraphs. `q` with unsaved changes asks
 | speaker | → | audit selected speaker |
 | speaker | s | save all outputs |
 | speaker | q | quit |
-| audit   | Enter | expand/collapse cursor utterance |
-| audit   | a | reassign cursor utterance to… |
+| audit   | Enter | expand/collapse cursor paragraph |
+| audit   | a | reassign cursor paragraph to… |
 | audit   | ← | back to speaker screen |
 | pickers | ↑/↓, Enter, Esc | navigate, confirm, cancel |
 | prompts | chars, ⌫, Enter, Esc | edit, confirm, cancel |

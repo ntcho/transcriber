@@ -211,6 +211,17 @@ export function renderVtt(utterances: Utterance[], label: (id: string) => string
   return cues.join("\n\n") + "\n";
 }
 
+/** Group adjacent utterances by canonical speaker identity for paragraph views. */
+export function groupAdjacentUtterances(utterances: Utterance[]): Utterance[][] {
+  const groups: Utterance[][] = [];
+  for (const utterance of utterances) {
+    const last = groups.at(-1);
+    if (last && last[0]!.speakerId === utterance.speakerId) last.push(utterance);
+    else groups.push([utterance]);
+  }
+  return groups;
+}
+
 /** Format seconds for the compact Markdown timestamp. */
 function fmtMarkdownTimestamp(seconds: number, useHours: boolean): string {
   const totalSeconds = Math.floor(seconds);
@@ -225,12 +236,7 @@ function fmtMarkdownTimestamp(seconds: number, useHours: boolean): string {
 export function renderMd(utterances: Utterance[], label: (id: string) => string): string {
   const lastEnd = utterances[utterances.length - 1]?.end ?? 0;
   const useHours = lastEnd > 3_600;
-  const groups: Utterance[][] = [];
-  for (const utterance of utterances) {
-    const lastGroup = groups[groups.length - 1];
-    if (lastGroup && lastGroup[0]!.speakerId === utterance.speakerId) lastGroup.push(utterance);
-    else groups.push([utterance]);
-  }
+  const groups = groupAdjacentUtterances(utterances);
   const paragraphs = groups.map((group) => {
     const first = group[0]!;
     const words = group.flatMap((utterance) => utterance.words).join(" ");

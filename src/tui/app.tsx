@@ -14,6 +14,7 @@ import type { JSX } from "solid-js";
 import { onResize, render, useRenderer, useTerminalDimensions } from "@opentui/solid";
 import {
   fmtShort,
+  groupAdjacentUtterances,
   speakerRanks,
   type Utterance,
 } from "../domain.ts";
@@ -123,9 +124,23 @@ function speakerName(id: string, name?: string): string {
   return id === "?" ? "unattributed" : "?";
 }
 
-/** Return current utterances for one speaker after live regrouping. */
-function speakerUtterances(session: LabelSession, speakerId: string): Utterance[] {
-  return session.utterances.filter((utterance) => utterance.speakerId === speakerId);
+interface AuditParagraph {
+  key: number;
+  start: number;
+  text: string;
+  utterances: Utterance[];
+}
+
+/** Return output-shaped paragraphs for one speaker after live regrouping. */
+function auditParagraphs(session: LabelSession, speakerId: string): AuditParagraph[] {
+  return groupAdjacentUtterances(session.utterances)
+    .filter((group) => group[0]!.speakerId === speakerId)
+    .map((utterances) => ({
+      key: utterances[0]!.key,
+      start: utterances[0]!.start,
+      text: utterances.flatMap((utterance) => utterance.words).join(" "),
+      utterances,
+    }));
 }
 
 /** Use the pre-confirmation mode to render a quit prompt in its original view. */
@@ -166,23 +181,23 @@ function speakerBody(session: LabelSession, ui: UiState, height: number): string
   return body.slice(offset, offset + height).join("\n");
 }
 
-/** Build the audit body with one row per utterance and expanded wrapping. */
+/** Build the audit body with one row per paragraph and expanded wrapping. */
 function auditBody(session: LabelSession, ui: UiState, height: number): string {
   const mode = returnMode(ui.mode);
   if (mode.kind !== "audit" && mode.kind !== "reassign") return "";
-  const mine = speakerUtterances(session, mode.speakerId);
+  const paragraphs = auditParagraphs(session, mode.speakerId);
   const ranks = speakerRanks(session.meeting.segments);
   const ids = currentSpeakerIds(session);
   const cols = ui.cols;
   const textWidth = Math.max(1, cols - 12);
   const body: string[] = [];
   let cursorRow = 0;
-  mine.forEach((utterance, index) => {
+  paragraphs.forEach((paragraph, index) => {
     if (index === mode.cursor) cursorRow = body.length;
     const cursor = index === mode.cursor ? SYMBOLS.cursor : " ";
-    const expanded = mode.kind === "audit" && mode.expanded.includes(utterance.key);
-    const lines = expanded ? wrapText(utterance.words.join(" "), textWidth) : [truncate(utterance.words.join(" "), textWidth)];
-    body.push(` ${cursor} [${fmtShort(utterance.start)}] ${lines[0]}`);
+    const expanded = mode.kind === "audit" && mode.expanded.includes(paragraph.key);
+    const lines = expanded ? wrapText(paragraph.text, textWidth) : [truncate(paragraph.text, textWidth)];
+    body.push(` ${cursor} [${fmtShort(paragraph.start)}] ${lines[0]}`);
     lines.slice(1).forEach((line) => body.push(`          ${line}`));
     if (mode.kind === "reassign" && index === mode.cursor) {
       body.push("   reassign to:");
@@ -201,11 +216,11 @@ function headerText(session: LabelSession, ui: UiState): string {
   const mode = returnMode(ui.mode);
   const state = ui.dirty ? `${SYMBOLS.unsaved} [unsaved]` : `${SYMBOLS.saved} [saved]`;
   if (mode.kind === "audit" || mode.kind === "reassign") {
-    const mine = speakerUtterances(session, mode.speakerId);
+    const paragraphs = auditParagraphs(session, mode.speakerId);
     const ranks = speakerRanks(session.meeting.segments);
     const name = speakerName(mode.speakerId, session.state.names.get(mode.speakerId));
-    const talk = mine.reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
-    return truncate(`${state} · ${speakerTag(mode.speakerId, ranks.get(mode.speakerId))} ${name} · ${mine.length} ${mine.length === 1 ? "utterance" : "utterances"} · ${fmtShort(talk)} talk`, Math.max(1, ui.cols));
+    const talk = paragraphs.flatMap(({ utterances }) => utterances).reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
+    return truncate(`${state} · ${speakerTag(mode.speakerId, ranks.get(mode.speakerId))} ${name} · ${paragraphs.length} ${paragraphs.length === 1 ? "paragraph" : "paragraphs"} · ${fmtShort(talk)} talk`, Math.max(1, ui.cols));
   }
   const end = session.utterances.at(-1)?.end ?? 0;
   const summaries = session.summaries;
@@ -313,7 +328,7 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
     if (mode.kind === "speakers") {
       setMode({ ...mode, cursor: moveCursor(mode.cursor, delta, props.session.summaries.length) });
     } else if (mode.kind === "audit" || mode.kind === "reassign") {
-      setMode({ ...mode, cursor: moveCursor(mode.cursor, delta, speakerUtterances(props.session, mode.speakerId).length) });
+      setMode({ ...mode, cursor: moveCursor(mode.cursor, delta, auditParagraphs(props.session, mode.speakerId).length) });
     } else if (mode.kind === "merge") {
       const ids = currentSpeakerIds(props.session);
       const targets = ids.filter((id) => id !== ids[mode.cursor]);
@@ -343,12 +358,12 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
   const expand = () => {
     const mode = ui().mode;
     if (mode.kind !== "audit") return;
-    const mine = speakerUtterances(props.session, mode.speakerId);
-    const utterance = mine[clampCursor(mode.cursor, mine.length)];
-    if (!utterance) return;
-    const expanded = mode.expanded.includes(utterance.key)
-      ? mode.expanded.filter((key) => key !== utterance.key)
-      : [...mode.expanded, utterance.key];
+    const paragraphs = auditParagraphs(props.session, mode.speakerId);
+    const paragraph = paragraphs[clampCursor(mode.cursor, paragraphs.length)];
+    if (!paragraph) return;
+    const expanded = mode.expanded.includes(paragraph.key)
+      ? mode.expanded.filter((key) => key !== paragraph.key)
+      : [...mode.expanded, paragraph.key];
     setMode({ ...mode, expanded });
   };
 
@@ -379,13 +394,13 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
       setMode({ kind: "speakers", cursor: clampCursor(mode.cursor, props.session.summaries.length) });
       touch(`merged into ${speakerTag(targetId, speakerRanks(props.session.meeting.segments).get(targetId))}`);
     } else if (mode.kind === "reassign") {
-      const mine = speakerUtterances(props.session, mode.speakerId);
-      const utterance = mine[clampCursor(mode.cursor, mine.length)];
+      const paragraphs = auditParagraphs(props.session, mode.speakerId);
+      const paragraph = paragraphs[clampCursor(mode.cursor, paragraphs.length)];
       const targets = ids.filter((id) => id !== mode.speakerId);
       const targetId = targets[clampCursor(mode.pick, targets.length)];
-      if (!utterance || !targetId) return;
-      props.session.apply({ kind: "reassign", utteranceKey: utterance.key, targetId });
-      const remaining = speakerUtterances(props.session, mode.speakerId);
+      if (!paragraph || !targetId) return;
+      props.session.applyMany(paragraph.utterances.map(({ key }) => ({ kind: "reassign", utteranceKey: key, targetId })));
+      const remaining = auditParagraphs(props.session, mode.speakerId);
       setMode(remaining.length === 0
         ? { kind: "speakers", cursor: clampCursor(ids.indexOf(mode.speakerId), props.session.summaries.length) }
         : { kind: "audit", speakerId: mode.speakerId, cursor: clampCursor(mode.cursor, remaining.length), expanded: [] });

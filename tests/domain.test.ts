@@ -76,6 +76,31 @@ describe("speaker label actions", () => {
     expect(session.dirty).toBe(true);
   });
 
+  it("reassigns multiple utterances as one undoable action", () => {
+    const meeting = fixtureMeeting();
+    meeting.words = [
+      { word: "first", startTime: 0, endTime: 0.4 },
+      { word: "second", startTime: 2, endTime: 2.4 },
+      { word: "target", startTime: 4, endTime: 4.4 },
+    ];
+    meeting.segments = [
+      { speakerId: "SPEAKER_00", start: 0, end: 0.5 },
+      { speakerId: "SPEAKER_00", start: 2, end: 2.5 },
+      { speakerId: "SPEAKER_01", start: 4, end: 4.5 },
+    ];
+    const session = new LabelSession(meeting);
+
+    session.applyMany([
+      { kind: "reassign", utteranceKey: 0, targetId: "SPEAKER_01" },
+      { kind: "reassign", utteranceKey: 1, targetId: "SPEAKER_01" },
+    ]);
+
+    expect(session.state.overrides).toEqual(new Map([[0, "SPEAKER_01"], [1, "SPEAKER_01"]]));
+    expect(session.undo()).toBe(true);
+    expect(session.state.overrides).toEqual(new Map());
+    expect(session.dirty).toBe(false);
+  });
+
   it("supports rename, merge, and undo through one mutation boundary", () => {
     const session = new LabelSession(fixtureMeeting());
 
