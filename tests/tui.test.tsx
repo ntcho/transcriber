@@ -10,8 +10,8 @@ import { rm } from "node:fs/promises";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import { render } from "@opentui/solid";
-import { LabelingApp } from "../src/tui/app.tsx";
-import { LabelSession } from "../src/tui/model.ts";
+import { LabelingApp, renderLabelingFrame } from "../src/tui/app.tsx";
+import { createUiState, LabelSession } from "../src/tui/model.ts";
 import type { MeetingData } from "../src/pipeline.ts";
 
 const temporaryBases: string[] = [];
@@ -113,8 +113,10 @@ describe("OpenTUI speaker labeling tree", () => {
 
       await setup.mockInput.pressKey("q");
       await setup.flush();
-      await setup.renderOnce();
-      expect(setup.captureCharFrame()).toContain("save before quitting?");
+      const quitFrame = await setup.waitForFrame((current) => current.includes("save before quitting?"));
+      expect(quitFrame).toContain("[y] save");
+      expect(quitFrame).toContain("[n] discard");
+      expect(quitFrame).toContain("[⎋] cancel");
 
       await setup.mockInput.pressKey("n");
       expect(results).toEqual(["quit"]);
@@ -159,6 +161,7 @@ describe("OpenTUI speaker labeling tree", () => {
 
       const frame = await setup.waitForFrame((current) => current.includes("merge S1 into:"));
       expect(frame).toContain("merge S1 into:");
+      expect(frame).toContain("▸ S2  ?");
       expect(frame).toContain("S2  ?");
       expect(frame).not.toContain("     > S1  ?");
 
@@ -251,6 +254,38 @@ describe("OpenTUI speaker labeling tree", () => {
       const frame = await setup.waitForFrame((current) => current.split("\n").every((line) => line.length <= 40));
       expect(frame).toContain("representative.mp4");
       expect(frame).toContain("[saved]");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("uses terminal symbols and anchors the footer to the final row", () => {
+    const session = new LabelSession(fixture());
+    const frame = renderLabelingFrame(session, createUiState(8, 40));
+    const lines = frame.split("\n");
+
+    expect(lines).toHaveLength(8);
+    expect(lines.at(-1)).toContain("↑↓");
+    expect(lines.at(-1)).toContain("→");
+    expect(lines.some((line) => line.includes("▸ S1"))).toBe(true);
+    expect(lines.some((line) => line.includes("█"))).toBe(true);
+    expect(lines.every((line) => line.length <= 40)).toBe(true);
+  });
+
+  it("keeps the footer below the active rename input", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 10 });
+    const keymap = createDefaultOpenTuiKeymap(setup.renderer);
+    const session = new LabelSession(fixture());
+    try {
+      await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
+      await setup.renderOnce();
+      await setup.mockInput.pressEnter();
+      await setup.flush();
+      const lines = (await setup.waitForFrame((frame) => frame.includes("rename S1"))).trimEnd().split("\n");
+
+      expect(lines).toHaveLength(10);
+      expect(lines.at(-1)).toContain("[↵]");
+      expect(lines.at(-2)).toContain("─");
     } finally {
       setup.renderer.destroy();
     }

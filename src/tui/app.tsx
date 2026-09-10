@@ -1,21 +1,20 @@
 /**
  * OpenTUI/Solid speaker-labeling application.
  *
- * The tree is intentionally stable: one reactive text frame and one reusable
- * input renderable avoid recreating terminal focus targets while a user moves
+ * The tree is intentionally stable: fixed header/body/footer renderables and
+ * one reusable input avoid recreating terminal focus targets while a user moves
  * between overview, audit, picker, and prompt modes.
  */
 
 import { createCliRenderer, type InputRenderable, type KeyEvent, type Renderable, type TextRenderable } from "@opentui/core";
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import type { Keymap } from "@opentui/keymap";
-import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js/dist/solid.js";
-import type { Accessor, JSX } from "solid-js";
-import { render, useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { createEffect, createSignal, onCleanup, onMount } from "solid-js/dist/solid.js";
+import type { JSX } from "solid-js";
+import { onResize, render, useRenderer, useTerminalDimensions } from "@opentui/solid";
 import {
   fmtShort,
   speakerRanks,
-  type SpeakerSummary,
   type Utterance,
 } from "../domain.ts";
 import type { MeetingData } from "../pipeline.ts";
@@ -31,7 +30,24 @@ import {
   type UiState,
 } from "./model.ts";
 
-const BAR_WIDTH = 20;
+const HEADER_ROWS = 1;
+const FOOTER_ROWS = 2;
+const PROMPT_ROWS = 1;
+
+const SYMBOLS = {
+  cursor: "▸",
+  empty: "·",
+  filled: "█",
+  unfilled: "░",
+  arrowRight: "→",
+  arrowLeft: "←",
+  upDown: "↑↓",
+  enter: "↵",
+  escape: "⎋",
+  warning: "⚠",
+  saved: "✓",
+  unsaved: "●",
+} as const;
 
 /** Result returned after the renderer has restored the terminal. */
 export type TuiResult = "saved" | "quit";
@@ -46,7 +62,7 @@ export interface LabelingAppProps {
 /** Return a terminal-safe single-line truncation. */
 function truncate(text: string, width: number): string {
   if (width <= 0) return "";
-  return text.length <= width ? text : text.slice(0, Math.max(0, width - 3)) + "...";
+  return text.length <= width ? text : text.slice(0, Math.max(0, width - 1)) + "…";
 }
 
 /** Wrap prose into rows no wider than the current terminal content area. */
@@ -55,6 +71,18 @@ function wrapText(text: string, width: number): string[] {
   const lines: string[] = [];
   let line = "";
   for (const word of text.split(" ")) {
+    if (word.length > width) {
+      if (line) {
+        lines.push(line);
+        line = "";
+      }
+      for (let start = 0; start < word.length; start += width) {
+        const chunk = word.slice(start, start + width);
+        if (chunk.length === width) lines.push(chunk);
+        else line = chunk;
+      }
+      continue;
+    }
     if (line && `${line} ${word}`.length > width) {
       lines.push(line);
       line = word;
@@ -67,9 +95,16 @@ function wrapText(text: string, width: number): string[] {
 }
 
 /** Render the proportional talk-time bar without ANSI escape sequences. */
-function talkBar(share: number): string {
-  const filled = Math.round(Math.max(0, Math.min(1, share)) * BAR_WIDTH);
-  return "#".repeat(filled) + ".".repeat(BAR_WIDTH - filled);
+function talkBar(share: number, width: number): string {
+  const filled = Math.round(Math.max(0, Math.min(1, share)) * width);
+  return SYMBOLS.filled.repeat(filled) + SYMBOLS.unfilled.repeat(width - filled);
+}
+
+/** Keep the speaker row useful at both narrow and wide terminal widths. */
+function speakerColumns(cols: number): { name: number; bar: number } {
+  const name = Math.min(14, Math.max(6, Math.floor((Math.max(0, cols) - 18) / 4)));
+  const bar = Math.max(1, Math.min(24, cols - name - 28));
+  return { name, bar };
 }
 
 /** Return current ranked speaker ids that still own utterances. */
@@ -87,64 +122,52 @@ function returnMode(mode: Mode): BaseMode {
   return mode.kind === "confirm-quit" ? mode.returnMode : mode;
 }
 
-/** Build the speaker overview frame from domain-derived summaries. */
-function speakerFrame(session: LabelSession, ui: UiState): string {
+/** Build the speaker overview body from domain-derived summaries. */
+function speakerBody(session: LabelSession, ui: UiState, height: number): string {
   const mode = returnMode(ui.mode);
   const summaries = session.summaries;
-  const cols = Math.min(ui.cols, 100);
+  const cols = ui.cols;
+  const columns = speakerColumns(cols);
   const body: string[] = [];
+  let cursorRow = 0;
   summaries.forEach((summary, index) => {
-    const cursor = (mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge") && index === mode.cursor ? ">" : " ";
-    body.push(` ${cursor} S${summary.rank}  ${truncate(summary.assignedName, 14).padEnd(14)} ${talkBar(summary.share)}  ${fmtShort(summary.talkSeconds)} (${Math.round(summary.share * 100)}%)`);
+    if ((mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge") && index === mode.cursor) {
+      cursorRow = body.length;
+    }
+    const cursor = (mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge") && index === mode.cursor ? SYMBOLS.cursor : " ";
+    body.push(` ${cursor} S${summary.rank}  ${truncate(summary.assignedName, columns.name).padEnd(columns.name)} ${talkBar(summary.share, columns.bar)}  ${fmtShort(summary.talkSeconds)} (${Math.round(summary.share * 100)}%)`);
     body.push(`     ${summary.utteranceCount} ${summary.utteranceCount === 1 ? "utt" : "utts"} | first ${fmtShort(summary.firstStart)} | last ${fmtShort(summary.lastEnd)}`);
-    body.push(`     ${truncate(`"${summary.snippets[0] ?? ""}"`, cols - 7)}`);
-    if (summary.snippets[1]) body.push(`     ${truncate(`"${summary.snippets[1]}"`, cols - 7)}`);
+    body.push(`     ${truncate(`"${summary.snippets[0] ?? ""}"`, Math.max(1, cols - 7))}`);
+    if (summary.snippets[1]) body.push(`     ${truncate(`"${summary.snippets[1]}"`, Math.max(1, cols - 7))}`);
     if (mode.kind === "rename" && mode.cursor === index) {
-      body.push(`     rename S${summary.rank} -> ${mode.buffer}_`);
-      body.push("     (Enter confirm | Esc cancel)");
+      body.push(`     rename S${summary.rank} ${SYMBOLS.arrowRight} ${mode.buffer}${SYMBOLS.cursor}`);
     } else if (mode.kind === "merge" && mode.cursor === index) {
       body.push(`     merge S${summary.rank} into:`);
       summaries.filter((target) => target.id !== summary.id).forEach((target, pick) => {
-        body.push(`     ${pick === mode.pick ? ">" : " "} S${target.rank}  ${target.assignedName}`);
+        body.push(`     ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} S${target.rank}  ${target.assignedName}`);
       });
-      body.push("     (Up/Down target | Enter merge | Esc cancel)");
     }
     body.push("");
   });
-  if (ui.mode.kind === "confirm-quit") body.push(" save before quitting? (y/n)");
-  const cursor = mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge" ? mode.cursor : 0;
-  const height = Math.max(1, ui.rows - 4);
-  const view = body.slice(scrollOffset(cursor * 4, height, body.length), scrollOffset(cursor * 4, height, body.length) + height);
-  const end = session.utterances.at(-1)?.end ?? 0;
-  const unlabeled = summaries.filter((summary) => summary.assignedName === "?").length;
-  const header = `${session.meeting.sourceName} | ${fmtShort(end)} | ${summaries.length} ${summaries.length === 1 ? "speaker" : "speakers"} | unlabeled ${unlabeled}`;
-  const footer = ui.mode.kind === "confirm-quit"
-    ? "save before quitting? (y/n)"
-    : mode.kind === "rename"
-      ? "type name | Enter confirm | Esc cancel"
-      : mode.kind === "merge"
-        ? "Up/Down target | Enter merge | Esc cancel"
-        : "Up/Down select | Right audit | Enter rename | m merge | u undo | s save+exit | q quit";
-  return [
-    `${header} ${ui.dirty ? "[unsaved]" : "[saved]"}`,
-    ...view,
-    "-".repeat(Math.max(1, cols)),
-    `${footer}${ui.status ? ` | ${ui.status}` : ""}`,
-  ].join("\n");
+  if (ui.mode.kind === "confirm-quit") body.push(`${SYMBOLS.warning} save before quitting?`);
+  const offset = scrollOffset(cursorRow, height, body.length);
+  return body.slice(offset, offset + height).join("\n");
 }
 
-/** Build the audit frame with one row per utterance and expanded wrapping. */
-function auditFrame(session: LabelSession, ui: UiState): string {
+/** Build the audit body with one row per utterance and expanded wrapping. */
+function auditBody(session: LabelSession, ui: UiState, height: number): string {
   const mode = returnMode(ui.mode);
   if (mode.kind !== "audit" && mode.kind !== "reassign") return "";
   const mine = speakerUtterances(session, mode.speakerId);
   const ranks = speakerRanks(session.meeting.segments);
   const ids = currentSpeakerIds(session);
-  const cols = Math.min(ui.cols, 100);
-  const textWidth = cols - 12;
+  const cols = ui.cols;
+  const textWidth = Math.max(1, cols - 12);
   const body: string[] = [];
+  let cursorRow = 0;
   mine.forEach((utterance, index) => {
-    const cursor = index === mode.cursor ? ">" : " ";
+    if (index === mode.cursor) cursorRow = body.length;
+    const cursor = index === mode.cursor ? SYMBOLS.cursor : " ";
     const expanded = mode.kind === "audit" && mode.expanded.includes(utterance.key);
     const lines = expanded ? wrapText(utterance.words.join(" "), textWidth) : [truncate(utterance.words.join(" "), textWidth)];
     body.push(` ${cursor} [${fmtShort(utterance.start)}] ${lines[0]}`);
@@ -152,31 +175,84 @@ function auditFrame(session: LabelSession, ui: UiState): string {
     if (mode.kind === "reassign" && index === mode.cursor) {
       body.push("   reassign to:");
       ids.filter((id) => id !== mode.speakerId).forEach((id, pick) => {
-        body.push(`   ${pick === mode.pick ? ">" : " "} S${ranks.get(id) ?? "?"}  ${session.state.names.get(id) ?? "?"}`);
+        body.push(`   ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} S${ranks.get(id) ?? "?"}  ${session.state.names.get(id) ?? "?"}`);
       });
-      body.push("   (Up/Down target | Enter reassign | Esc cancel)");
     }
   });
-  if (ui.mode.kind === "confirm-quit") body.push(" save before quitting? (y/n)");
-  const height = Math.max(1, ui.rows - 4);
-  const offset = scrollOffset(mode.cursor, height, body.length);
-  const view = body.slice(offset, offset + height);
-  const name = session.state.names.get(mode.speakerId) ?? "?";
-  const talk = mine.reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
-  const header = `S${ranks.get(mode.speakerId) ?? "?"} ${name} | ${mine.length} ${mine.length === 1 ? "utterance" : "utterances"} | ${fmtShort(talk)} talk${ui.dirty ? " | [unsaved]" : ""}`;
-  const footer = ui.mode.kind === "confirm-quit"
-    ? "save before quitting? (y/n)"
-    : mode.kind === "reassign"
-      ? "Up/Down target | Enter reassign | Esc cancel"
-      : "Up/Down select | Enter expand | a reassign | Left back | u undo";
-  return [header, ...view, "-".repeat(Math.max(1, cols)), `${footer}${ui.status ? ` | ${ui.status}` : ""}`].join("\n");
+  if (ui.mode.kind === "confirm-quit") body.push(`${SYMBOLS.warning} save before quitting?`);
+  const offset = scrollOffset(cursorRow, height, body.length);
+  return body.slice(offset, offset + height).join("\n");
 }
 
-/** Build the complete reactive frame for the current transient mode. */
-export function renderLabelingFrame(session: LabelSession, ui: UiState): string {
+/** Return the visible header for the current screen. */
+function headerText(session: LabelSession, ui: UiState): string {
   const mode = returnMode(ui.mode);
-  const frame = mode.kind === "audit" || mode.kind === "reassign" ? auditFrame(session, ui) : speakerFrame(session, ui);
-  return frame.split("\n").map((line) => truncate(line, Math.max(1, ui.cols))).join("\n");
+  const state = ui.dirty ? `${SYMBOLS.unsaved} [unsaved]` : `${SYMBOLS.saved} [saved]`;
+  if (mode.kind === "audit" || mode.kind === "reassign") {
+    const mine = speakerUtterances(session, mode.speakerId);
+    const ranks = speakerRanks(session.meeting.segments);
+    const name = session.state.names.get(mode.speakerId) ?? "?";
+    const talk = mine.reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
+    return truncate(`${state} · S${ranks.get(mode.speakerId) ?? "?"} ${name} · ${mine.length} ${mine.length === 1 ? "utterance" : "utterances"} · ${fmtShort(talk)} talk`, Math.max(1, ui.cols));
+  }
+  const end = session.utterances.at(-1)?.end ?? 0;
+  const summaries = session.summaries;
+  const unlabeled = summaries.filter((summary) => summary.assignedName === "?").length;
+  return truncate(`${state} · ${session.meeting.sourceName} · ${fmtShort(end)} · ${summaries.length} ${summaries.length === 1 ? "speaker" : "speakers"} · unlabeled ${unlabeled}`, Math.max(1, ui.cols));
+}
+
+/** Return the footer key hints and current status for the active mode. */
+function footerText(ui: UiState): string {
+  const mode = returnMode(ui.mode);
+  let footer: string;
+  if (ui.mode.kind === "confirm-quit") {
+    footer = `${SYMBOLS.warning} save before quitting? [y] save · [n] discard · [${SYMBOLS.escape}] cancel`;
+  } else if (mode.kind === "rename") {
+    footer = `type name · [${SYMBOLS.enter}] confirm · [${SYMBOLS.escape}] cancel`;
+  } else if (mode.kind === "merge") {
+    footer = `[${SYMBOLS.upDown}] target · [${SYMBOLS.enter}] merge · [${SYMBOLS.escape}] cancel`;
+  } else if (mode.kind === "reassign") {
+    footer = `[${SYMBOLS.upDown}] target · [${SYMBOLS.enter}] reassign · [${SYMBOLS.escape}] cancel`;
+  } else if (mode.kind === "audit") {
+    footer = `[${SYMBOLS.upDown}] select · [${SYMBOLS.enter}] expand · [a] reassign · [${SYMBOLS.arrowLeft}] back · [u] undo`;
+  } else {
+    footer = `[${SYMBOLS.upDown}] select · [${SYMBOLS.arrowRight}] Right audit · [${SYMBOLS.enter}] rename · [m] merge · [u] undo · [s] save+exit · [q] quit`;
+  }
+  return truncate(`${footer}${ui.status ? ` · ${ui.status}` : ""}`, Math.max(1, ui.cols));
+}
+
+/** Render the fixed two-row footer, including its width-aware divider. */
+function footerFrameText(ui: UiState): string {
+  return `${"─".repeat(Math.max(1, ui.cols))}\n${footerText(ui)}`;
+}
+
+/** Return the body viewport size after reserving fixed rows. */
+function bodyRows(ui: UiState): number {
+  const promptRows = ui.mode.kind === "rename" ? PROMPT_ROWS : 0;
+  return Math.max(1, ui.rows - HEADER_ROWS - FOOTER_ROWS - promptRows);
+}
+
+/** Build the current body viewport without the fixed header or footer. */
+function bodyText(session: LabelSession, ui: UiState): string {
+  const mode = returnMode(ui.mode);
+  return mode.kind === "audit" || mode.kind === "reassign"
+    ? auditBody(session, ui, bodyRows(ui))
+    : speakerBody(session, ui, bodyRows(ui));
+}
+
+/** Render a complete frame with the footer guaranteed to be the final row. */
+export function renderLabelingFrame(session: LabelSession, ui: UiState): string {
+  const cols = Math.max(1, ui.cols);
+  const rows = Math.max(1, ui.rows);
+  const contentRows = Math.max(0, rows - FOOTER_ROWS);
+  const lines = [headerText(session, ui), ...bodyText(session, ui).split("\n")];
+  if (ui.mode.kind === "rename") lines.push(`     ${ui.mode.buffer}${SYMBOLS.cursor}`);
+  const visible = lines.slice(0, contentRows);
+  while (visible.length < contentRows) visible.push("");
+  const footer = footerFrameText(ui).split("\n");
+  if (rows === 1) return truncate(footerText(ui), cols);
+  if (rows === 2) return footer.map((line) => truncate(line, cols)).join("\n");
+  return [...visible, ...footer].map((line) => truncate(line, cols)).join("\n");
 }
 
 /** Root Solid component that owns transient state and semantic command handlers. */
@@ -185,7 +261,9 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
   const dimensions = useTerminalDimensions();
   const [ui, setUi] = createSignal(createUiState(dimensions().height, dimensions().width));
   const [revision, setRevision] = createSignal(0);
-  let frameText: TextRenderable | undefined;
+  let headerRenderable: TextRenderable | undefined;
+  let bodyRenderable: TextRenderable | undefined;
+  let footerRenderable: TextRenderable | undefined;
   let promptInput: InputRenderable | undefined;
   let promptWasActive = false;
 
@@ -316,9 +394,15 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
     if (mode.kind === "rename") setMode({ ...mode, buffer: value });
   };
 
-  createEffect(() => {
-    const size = dimensions();
-    setUi((current) => ({ ...current, rows: size.height, cols: size.width }));
+  const updateFrame = () => {
+    const current = ui();
+    if (headerRenderable) headerRenderable.content = headerText(props.session, current);
+    if (bodyRenderable) bodyRenderable.content = bodyText(props.session, current);
+    if (footerRenderable) footerRenderable.content = footerFrameText(current);
+  };
+
+  onResize((width, height) => {
+    setUi((current) => ({ ...current, rows: height, cols: width }));
     setRevision((value) => value + 1);
   });
 
@@ -381,24 +465,38 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
 
   createEffect(() => {
     revision();
-    if (frameText) {
-      frameText.content = renderLabelingFrame(props.session, ui());
-      renderer.requestRender();
-    }
+    updateFrame();
+    renderer.requestRender();
   });
   onMount(() => {
-    if (frameText) frameText.content = renderLabelingFrame(props.session, ui());
+    updateFrame();
   });
 
   return (
     <box width="100%" height="100%" flexDirection="column" overflow="hidden">
       <text
         ref={(element) => {
-          frameText = element;
-          frameText.content = renderLabelingFrame(props.session, ui());
+          headerRenderable = element;
+          headerRenderable.content = headerText(props.session, ui());
         }}
+        width="100%"
+        height={HEADER_ROWS}
+        flexShrink={0}
+        wrapMode="none"
+        content={headerText(props.session, ui())}
+      />
+      <text
+        ref={(element) => {
+          bodyRenderable = element;
+          bodyRenderable.content = bodyText(props.session, ui());
+        }}
+        width="100%"
+        minHeight={1}
         flexGrow={1}
-        content={renderLabelingFrame(props.session, ui())}
+        flexShrink={1}
+        overflow="hidden"
+        wrapMode="none"
+        content={bodyText(props.session, ui())}
       />
       <input
         ref={(element) => {
@@ -406,10 +504,22 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
           promptInput.visible = false;
         }}
         width="100%"
-        placeholder="Speaker name"
+        flexShrink={0}
+        placeholder="type a name…"
         focused={false}
         onInput={updateRename}
         onSubmit={confirmRename}
+      />
+      <text
+        ref={(element) => {
+          footerRenderable = element;
+          footerRenderable.content = footerFrameText(ui());
+        }}
+        width="100%"
+        height={FOOTER_ROWS}
+        flexShrink={0}
+        wrapMode="none"
+        content={footerFrameText(ui())}
       />
     </box>
   );
