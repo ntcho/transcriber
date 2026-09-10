@@ -11,8 +11,6 @@ diarization. Inference runs on-device after the required models are downloaded.
 
 - `transcribe.ts` — the whole pipeline: CLI orchestration, speaker-labeling
   TUI, and SRT/VTT/MD emission. Single file, zero dependencies, Bun.
-- `merge_transcript.py` — headless merge fallback, superseded by
-  `bun transcribe.ts --no-tui` (kept for reference).
 - `SPEC.md` — TUI design spec: screen states, data model, keybindings.
 - The FluidAudio engine repo is cloned outside the workspace at
   `~/Applications/FluidAudio` (third-party, Apache-2.0, not committed here).

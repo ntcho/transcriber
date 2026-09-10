@@ -1,6 +1,6 @@
 # Transcriber TUI — Design Spec
 
-Status: approved design pending build · 2026-09-03
+Status: implemented and piloted · 2026-09-04
 Pipeline context: [README.md](README.md)
 
 ## Problem
@@ -48,8 +48,8 @@ Runs in alt-screen with raw mode. Requires ≥80×24 terminal. ANSI 16-color saf
 - **Display name** per speaker: user-assigned name, else `S<rank>` by first
   appearance (deterministic). Cards show `S2 Ada`; unnamed shows `S2 ?`.
 - **Utterance** = maximal run of same-speaker words (gap split: silence > 1.0s).
-  Built from `wordTimings` via max-overlap assignment (nearest within 2.0s cap
-  for orphans), as in `merge_transcript.py`.
+   Built from `wordTimings` via max-overlap assignment (nearest within 2.0s cap
+   for orphans), as implemented in `transcribe.ts`.
 - **Reassign** applies to the utterance as a unit. Utterances are keyed by the
   index of their first word in `wordTimings` (stable under regrouping).
   **Grouping recomputes live** after every reassign, so a run like
@@ -215,10 +215,9 @@ as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
 
 ## Output formats
 
-Unchanged from `merge_transcript.py` (SRT cues per utterance, WebVTT header +
-cues, Markdown linear log with `[MM:SS] label:` bullets and speaker legend).
-The TUI script ports that logic; `merge_transcript.py` stays as the headless
-fallback and is superseded for interactive use.
+SRT cues per utterance, WebVTT header + cues, and a Markdown linear log with
+`[MM:SS] label:` bullets and a speaker legend. The Bun script owns this logic
+for both interactive and headless use.
 
 ## Assumptions to validate in pilot
 
