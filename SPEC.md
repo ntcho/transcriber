@@ -1,6 +1,6 @@
 # Transcriber TUI — Design Spec
 
-Status: implemented and piloted · 2026-09-04
+Status: implemented and piloted · 2026-09-10
 Pipeline context: [README.md](README.md)
 
 ## Problem
@@ -11,7 +11,8 @@ scrolling through an hour of transcript inside a TUI.
 
 ## Direction
 
-Single-file, zero-dependency Bun script `transcribe.ts` in this folder:
+The Bun entrypoint `transcribe.ts` connects a framework-independent pipeline and
+an OpenTUI/Solid speaker-labeling application:
 
 ```
 bun transcribe.ts <recording>          # full pipeline + labeling TUI
@@ -28,18 +29,20 @@ bun transcribe.ts <recording> --no-tui # headless: apply sidecar, emit outputs (
 **Every TUI operation is a pure label transform.** ASR and diarization results
 are never recomputed.
 
-## Architecture (one file, ~700 lines)
+## Architecture
 
 | Module    | Responsibility |
 |-----------|----------------|
-| pipeline  | ensure JSONs (spawn CLI, stream progress), parse, build utterances |
-| state     | label mappings, utterance overrides, undo stack, dirty flag |
-| render    | pure `state → string` per screen state; full redraw per keypress |
-| input     | raw-mode keypress parser (arrows, Enter, Esc, chars, ctrl-c) |
-| save      | regroup words → SRT/VTT/MD/sidecar |
-| main      | orchestration + flags |
+| `src/pipeline.ts` | ensure JSONs, spawn CLI, parse cached data, save outputs |
+| `src/domain.ts` | group utterances, apply label rules, render exports |
+| `src/tui/model.ts` | semantic actions, undo history, transient UI state |
+| `src/tui/keymap.ts` | named commands and mode-scoped key bindings |
+| `src/tui/app.tsx` | OpenTUI renderer lifecycle and Solid presentation tree |
+| `transcribe.ts` | CLI parsing, pipeline/TUI orchestration, status output |
 
-Runs in alt-screen with raw mode. Requires ≥80×24 terminal. ANSI 16-color safe.
+OpenTUI owns alternate-screen, raw input, cursor visibility, resize events, and
+terminal restoration. The application renders plain text through OpenTUI and
+requires a terminal wide enough to keep the key hints usable.
 
 ## Data model
 
@@ -49,7 +52,7 @@ Runs in alt-screen with raw mode. Requires ≥80×24 terminal. ANSI 16-color saf
   appearance (deterministic). Cards show `S2 Ada`; unnamed shows `S2 ?`.
 - **Utterance** = maximal run of same-speaker words (gap split: silence > 1.0s).
    Built from `wordTimings` via max-overlap assignment (nearest within 2.0s cap
-   for orphans), as implemented in `transcribe.ts`.
+   for orphans), as implemented in `src/domain.ts`.
 - **Reassign** applies to the utterance as a unit. Utterances are keyed by the
   index of their first word in `wordTimings` (stable under regrouping).
   **Grouping recomputes live** after every reassign, so a run like
@@ -219,12 +222,18 @@ SRT cues per utterance, WebVTT header + cues, and a Markdown linear log with
 `[MM:SS] label:` bullets and a speaker legend. The Bun script owns this logic
 for both interactive and headless use.
 
-## Assumptions to validate in pilot
+## Pilot Verification
 
-- [ ] Speaker count stays small (2–8) — cards fit one screen without scrolling
-- [ ] rename + merge + reassign cover the real labeling workload
-- [ ] raw-ANSI rendering is stable in the user's terminal (Ghostty/iTerm/tmux)
-- [ ] sidecar reuse makes reopen-and-relabel instant in practice
+Manual real-terminal pilot completed on 2026-09-10. Speaker overview, rename,
+merge, audit, expansion, reassignment, undo, save, quit confirmation, Ctrl-C,
+resize, scrolling, narrow/wide layouts, and terminal restoration passed.
+
+## Assumptions validated in pilot
+
+- [x] Speaker count stays small (2–8) — cards fit one screen without scrolling
+- [x] rename + merge + reassign cover the real labeling workload
+- [x] OpenTUI rendering is stable in the user's terminal (Ghostty/iTerm/tmux)
+- [x] sidecar reuse makes reopen-and-relabel instant in practice
 
 ## Not doing (v1)
 
@@ -233,5 +242,5 @@ for both interactive and headless use.
 - **ASR text editing** — word-timing/merging complexity for marginal gain (2.1% WER)
 - **Word-level reassignment** — utterance-level covers the realistic fix
 - **Cross-recording speaker memory** — each meeting labels fresh
-- **ink/blessed/terminal-kit** — zero-dep keeps it one file and install-free
+- **ink/blessed/terminal-kit** — OpenTUI is the selected terminal UI runtime
 - **Mouse support**

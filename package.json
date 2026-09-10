@@ -1,9 +1,18 @@
 {
   "name": "@ntcho/transcriber",
+  "scripts": {
+    "test": "bun test"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^7"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.11",
+    "@opentui/keymap": "^0.5.11",
+    "@opentui/solid": "^0.5.11",
+    "solid-js": "1.9.12"
   }
 }

@@ -9,8 +9,16 @@ diarization. Inference runs on-device after the required models are downloaded.
 
 ## Layout
 
-- `transcribe.ts` — the whole pipeline: CLI orchestration, speaker-labeling
-  TUI, and SRT/VTT/MD emission. Single file, zero dependencies, Bun.
+- `transcribe.ts` — CLI orchestration and the stable `bun transcribe.ts` entrypoint.
+- `src/domain.ts` — framework-independent utterance grouping, label transforms,
+  fallback labels, sidecar format, and SRT/VTT/Markdown renderers.
+- `src/pipeline.ts` — FluidAudio cache loading, inference orchestration, and
+  save boundaries shared by interactive and headless paths.
+- `src/tui/model.ts` — semantic label actions, undo history, and transient UI
+  mode state.
+- `src/tui/keymap.ts` — named OpenTUI commands and mode-scoped bindings.
+- `src/tui/app.tsx` — OpenTUI renderer lifecycle and SolidJS presentation tree.
+- `tests/` — Bun smoke tests for domain, persistence, keymap, and renderer flows.
 - `SPEC.md` — TUI design spec: screen states, data model, keybindings.
 - The FluidAudio engine repo is cloned outside the workspace at
   `~/Applications/FluidAudio` (third-party, Apache-2.0, not committed here).
@@ -18,6 +26,9 @@ diarization. Inference runs on-device after the required models are downloaded.
 ## Setup
 
 ```bash
+# App dependencies
+bun install
+
 # Engine: already built
 cd ~/Applications/FluidAudio
 swift build -c release --product fluidaudiocli   # ~2 min on M4 Max
@@ -34,12 +45,16 @@ bun transcribe.ts meeting.mp4
 ```
 
 1. Missing `.asr.json` / `.diar.json` → runs the FluidAudio CLI (progress streamed)
-2. Opens the speaker-labeling TUI (SPEC.md): rename speakers, merge split
-   speakers, reassign individual utterances, undo
+2. Opens the OpenTUI/Solid speaker-labeling workflow (SPEC.md): rename
+   speakers, merge split speakers, reassign individual utterances, undo
 3. `s` writes `.srt`, `.vtt`, `.md`, `.labels.json` next to the recording
 
 Reopening a recording with cached JSONs is instant (labels replay from the
 sidecar — inference never re-runs). `--no-tui` skips the TUI for headless/agent use.
+
+The interactive renderer owns alternate-screen, raw-input, cursor, resize, and
+terminal restoration behavior. `q` or Ctrl-C asks before discarding unsaved
+labels; `s` saves all outputs and exits.
 
 ## Pipeline internals
 
