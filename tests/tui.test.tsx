@@ -116,7 +116,7 @@ describe("OpenTUI speaker labeling tree", () => {
       const quitFrame = await setup.waitForFrame((current) => current.includes("save before quitting?"));
       expect(quitFrame).toContain("[y] save");
       expect(quitFrame).toContain("[n] discard");
-      expect(quitFrame).toContain("[⎋] cancel");
+      expect(quitFrame).toContain("[esc] cancel");
 
       await setup.mockInput.pressKey("n");
       expect(results).toEqual(["quit"]);

@@ -43,7 +43,7 @@ const SYMBOLS = {
   arrowLeft: "←",
   upDown: "↑↓",
   enter: "↵",
-  escape: "⎋",
+  escape: "esc",
   warning: "⚠",
   saved: "✓",
   unsaved: "●",
