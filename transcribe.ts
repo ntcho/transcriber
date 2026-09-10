@@ -49,6 +49,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   try {
     const meeting = await loadMeeting(settings.input, base);
     if (!settings.tui) {
+      console.log("[3/3] Writing transcript files...");
       await saveMeeting(meeting);
       const ranks = speakerRanks(meeting.segments);
       console.log(
@@ -58,6 +59,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
 
+    console.log("[3/3] Opening speaker labeling...");
     const result = await runTui(meeting);
     if (result === "saved") printSavedSummary(base, meeting.input, meeting.state, meeting.segments);
   } catch (error) {

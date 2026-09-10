@@ -44,7 +44,7 @@ swift build -c release --product fluidaudiocli   # ~2 min on M4 Max
 bun transcribe.ts meeting.mp4
 ```
 
-1. Missing `.asr.json` / `.diar.json` → runs the FluidAudio CLI (progress streamed)
+1. Missing `.asr.json` / `.diar.json` → runs the FluidAudio CLI with concise progress output
 2. Opens the OpenTUI/Solid speaker-labeling workflow (SPEC.md): rename
    speakers, merge split speakers, reassign individual utterances, undo
 3. `s` writes `.srt`, `.vtt`, `.md`, `.labels.json` next to the recording

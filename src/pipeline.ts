@@ -31,29 +31,48 @@ export interface MeetingData {
   state: LabelState;
 }
 
+interface ProcessHandle {
+  exited: Promise<number>;
+}
+
+interface ProcessSpawner {
+  (command: string[], options: { stdout: "ignore"; stderr: "inherit" }): ProcessHandle;
+}
+
+/** Optional process and output hooks used to keep pipeline behavior testable. */
+export interface EnsureJsonOptions {
+  binaryPath?: string;
+  report?: (message: string) => void;
+  spawn?: ProcessSpawner;
+}
+
 /** Ensure FluidAudio has produced both cached inference JSON files. */
-export async function ensureJsons(input: string, base: string): Promise<void> {
+export async function ensureJsons(input: string, base: string, options: EnsureJsonOptions = {}): Promise<void> {
   const needAsr = !(await Bun.file(`${base}.asr.json`).exists());
   const needDiar = !(await Bun.file(`${base}.diar.json`).exists());
   if (!needAsr && !needDiar) return;
 
-  const bin = `${process.env.HOME}/Applications/FluidAudio/.build/release/fluidaudiocli`;
+  const bin = options.binaryPath ?? `${process.env.HOME}/Applications/FluidAudio/.build/release/fluidaudiocli`;
   if (!(await Bun.file(bin).exists())) {
     throw new Error('transcribe: fluidaudiocli not built — see README "Setup"');
   }
 
-  const run = async (step: string, args: string[]) => {
-    console.log(`[${step}] running: ${args.join(" ")}`);
-    const processHandle = Bun.spawn([bin, ...args], { stdout: "inherit", stderr: "inherit" });
+  const report = options.report ?? console.log;
+  const spawn = options.spawn ?? ((command, spawnOptions) => Bun.spawn(command, spawnOptions));
+  const run = async (step: number, label: string, args: string[]) => {
+    report(`[${step}/3] ${label}...`);
+    const startedAt = performance.now();
+    const processHandle = spawn([bin, ...args], { stdout: "ignore", stderr: "inherit" });
     const code = await processHandle.exited;
     if (code !== 0) throw new Error(`transcribe: ${args[0]} failed (exit ${code})`);
+    report(`[${step}/3] ${label} done in ${((performance.now() - startedAt) / 1000).toFixed(1)}s`);
   };
 
   if (needAsr) {
-    await run("1/2", ["transcribe", input, "--model-version", "v2", "--output-json", `${base}.asr.json`]);
+    await run(1, "Transcribing audio (Parakeet TDT v2)", ["transcribe", input, "--model-version", "v2", "--output-json", `${base}.asr.json`]);
   }
   if (needDiar) {
-    await run("2/2", ["process", input, "--mode", "offline", "--output", `${base}.diar.json`]);
+    await run(2, "Detecting speakers (offline VBx)", ["process", input, "--mode", "offline", "--output", `${base}.diar.json`]);
   }
 }
 

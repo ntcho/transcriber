@@ -187,9 +187,11 @@ as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
 ### Pipeline progress (only when JSONs are missing)
 
 ```
-[1/3] ASR (Parakeet TDT v2, English)…        done in 9.8s (196x realtime)
-[2/3] diarization (offline VBx)…             done in 41.2s
-[3/3] opening labeling TUI…
+[1/3] Transcribing audio (Parakeet TDT v2)...
+[1/3] Transcribing audio (Parakeet TDT v2) done in 9.8s
+[2/3] Detecting speakers (offline VBx)...
+[2/3] Detecting speakers (offline VBx) done in 41.2s
+[3/3] Opening speaker labeling...
 ```
 
 ### Error states (plain terminal, exit 1)
