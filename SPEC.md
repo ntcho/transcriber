@@ -19,11 +19,11 @@ bun transcribe.ts <recording>          # full pipeline + labeling TUI
 bun transcribe.ts <recording> --no-tui # headless: apply sidecar, emit outputs (agent path)
 ```
 
-1. Missing `.asr.json` / `.diar.json` → runs the FluidAudio CLI steps with
+1. Missing `<stem>.artifacts/asr.json` / `diar.json` → runs the FluidAudio CLI steps with
    streamed progress. Existing JSONs → opens the TUI instantly (no re-inference).
 2. Full-screen labeling TUI (states below).
-3. `s` → emits `.srt`, `.vtt`, `.md` + `<base>.labels.json` sidecar next to
-   the recording.
+3. `s` → emits `transcript.srt`, `transcript.vtt`, and `labels.json` inside
+   `<stem>.artifacts/`, plus `<stem>.md` next to the recording.
 4. The zsh `transcribe()` function becomes a thin wrapper around the bun script.
 
 **Every TUI operation is a pure label transform.** ASR and diarization results
@@ -60,7 +60,7 @@ requires a terminal wide enough to keep the key hints usable.
   always shows the truth. Undo covers surprises.
 - **Undo** = snapshot stack (names + overrides), capped at 50. `u` pops.
 
-### Sidecar `<base>.labels.json`
+### Sidecar `<base>.artifacts/labels.json`
 
 ```json
 {
@@ -175,7 +175,8 @@ Lists other speakers only. Enter applies and the utterance list regroups live
 
 ```
 Saved:
-  meeting.srt · meeting.vtt · meeting.md · meeting.labels.json
+  meeting.artifacts/transcript.srt · meeting.artifacts/transcript.vtt ·
+  meeting.md · meeting.artifacts/labels.json
   3 speakers: S1 Nathan · S2 Ada · S3 ?
 Reopen anytime:  bun transcribe.ts meeting.mp4   (instant — reuses cached JSONs)
 ```
@@ -222,7 +223,9 @@ as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
 
 SRT cues per utterance, WebVTT header + cues, and a Markdown linear log with
 `[MM:SS] label:` bullets and a speaker legend. The Bun script owns this logic
-for both interactive and headless use.
+for both interactive and headless use. ASR and diarization JSONs plus the label
+sidecar are required to resume without re-inference; the SRT, WebVTT, and
+Markdown files are optional exports that can be regenerated.
 
 ## Pilot Verification
 

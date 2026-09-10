@@ -1,12 +1,22 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { rm } from "node:fs/promises";
+import { artifactDir, artifactPath } from "../src/domain.ts";
 import { ensureJsons } from "../src/pipeline.ts";
+
+const temporaryBases: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryBases.splice(0).map((base) => rm(artifactDir(base), { recursive: true, force: true })));
+});
 
 describe("pipeline progress", () => {
   it("hides child transcript output and reports readable processing steps", async () => {
     const progress: string[] = [];
     const spawned: { command: string[]; options: { stdout: string; stderr: string } }[] = [];
+    const base = `/tmp/transcriber-progress-${crypto.randomUUID()}`;
+    temporaryBases.push(base);
 
-    await ensureJsons("meeting.m4a", `/tmp/transcriber-progress-${crypto.randomUUID()}`, {
+    await ensureJsons("meeting.m4a", base, {
       binaryPath: process.execPath,
       report: (message) => progress.push(message),
       spawn: (command, options) => {
@@ -16,6 +26,8 @@ describe("pipeline progress", () => {
     });
 
     expect(spawned).toHaveLength(2);
+    expect(spawned[0]!.command).toContain(artifactPath(base, "asr.json"));
+    expect(spawned[1]!.command).toContain(artifactPath(base, "diar.json"));
     expect(spawned.every(({ options }) => options.stdout === "ignore")).toBe(true);
     expect(spawned.every(({ options }) => options.stderr === "inherit")).toBe(true);
     expect(progress).toHaveLength(4);

@@ -6,6 +6,8 @@
  * the interactive and headless paths.
  */
 
+import { mkdir, rename } from "node:fs/promises";
+
 const GAP_SPLIT_SECONDS = 1.0;
 const ORPHAN_ASSIGN_CAP = 2.0;
 
@@ -267,9 +269,49 @@ export function deriveSpeakerSummaries(
     .filter((summary): summary is SpeakerSummary => summary !== null);
 }
 
+/** Return the directory used for one meeting's generated artifacts. */
+export function artifactDir(basePath: string): string {
+  return `${basePath}.artifacts`;
+}
+
+/** Return a generated artifact path inside the meeting's artifact directory. */
+export function artifactPath(basePath: string, filename: string): string {
+  return `${artifactDir(basePath)}/${filename}`;
+}
+
+/** Return the Markdown export path kept beside the source media. */
+export function markdownPath(basePath: string): string {
+  return `${basePath}.md`;
+}
+
+/** Move non-Markdown artifacts from the previous flat layout into the per-meeting directory. */
+export async function migrateLegacyArtifacts(basePath: string): Promise<void> {
+  const artifacts = [
+    ["asr.json", "asr.json"],
+    ["diar.json", "diar.json"],
+    ["labels.json", "labels.json"],
+    ["srt", "transcript.srt"],
+    ["vtt", "transcript.vtt"],
+  ] as const;
+  const legacy = artifacts.map(([suffix, filename]) => ({
+    source: `${basePath}.${suffix}`,
+    target: artifactPath(basePath, filename),
+  }));
+  const existing = [];
+  for (const artifact of legacy) {
+    if (await Bun.file(artifact.source).exists()) existing.push(artifact);
+  }
+  if (existing.length === 0) return;
+
+  await mkdir(artifactDir(basePath), { recursive: true });
+  for (const artifact of existing) {
+    if (!(await Bun.file(artifact.target).exists())) await rename(artifact.source, artifact.target);
+  }
+}
+
 /** Return the path used for a meeting's label sidecar. */
 export function sidecarPath(basePath: string): string {
-  return `${basePath}.labels.json`;
+  return artifactPath(basePath, "labels.json");
 }
 
 interface Sidecar {
@@ -282,6 +324,7 @@ interface Sidecar {
 /** Load labels from the sidecar, returning an empty state when it is absent. */
 export async function loadSidecar(basePath: string): Promise<LabelState> {
   const state = createLabelState();
+  await migrateLegacyArtifacts(basePath);
   const file = Bun.file(sidecarPath(basePath));
   if (!(await file.exists())) return state;
   const parsed = (await file.json()) as Partial<Sidecar>;
@@ -298,5 +341,7 @@ export async function saveSidecar(basePath: string, audio: string, state: LabelS
     overrides: Object.fromEntries([...state.overrides].map(([key, value]) => [String(key), value])),
     saved: new Date().toISOString(),
   };
+  await migrateLegacyArtifacts(basePath);
+  await mkdir(artifactDir(basePath), { recursive: true });
   await Bun.write(sidecarPath(basePath), JSON.stringify(sidecar, null, 2) + "\n");
 }

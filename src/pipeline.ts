@@ -5,10 +5,15 @@
  * functions are deliberately usable by both headless CLI code and the TUI.
  */
 
+import { mkdir } from "node:fs/promises";
 import {
+  artifactDir,
+  artifactPath,
   buildUtterances,
   displayName,
   loadSidecar,
+  markdownPath,
+  migrateLegacyArtifacts,
   renderMd,
   renderSrt,
   renderVtt,
@@ -48,14 +53,18 @@ export interface EnsureJsonOptions {
 
 /** Ensure FluidAudio has produced both cached inference JSON files. */
 export async function ensureJsons(input: string, base: string, options: EnsureJsonOptions = {}): Promise<void> {
-  const needAsr = !(await Bun.file(`${base}.asr.json`).exists());
-  const needDiar = !(await Bun.file(`${base}.diar.json`).exists());
+  await migrateLegacyArtifacts(base);
+  const asrPath = artifactPath(base, "asr.json");
+  const diarPath = artifactPath(base, "diar.json");
+  const needAsr = !(await Bun.file(asrPath).exists());
+  const needDiar = !(await Bun.file(diarPath).exists());
   if (!needAsr && !needDiar) return;
 
   const bin = options.binaryPath ?? `${process.env.HOME}/Applications/FluidAudio/.build/release/fluidaudiocli`;
   if (!(await Bun.file(bin).exists())) {
     throw new Error('transcribe: fluidaudiocli not built — see README "Setup"');
   }
+  await mkdir(artifactDir(base), { recursive: true });
 
   const report = options.report ?? console.log;
   const spawn = options.spawn ?? ((command, spawnOptions) => Bun.spawn(command, spawnOptions));
@@ -69,18 +78,18 @@ export async function ensureJsons(input: string, base: string, options: EnsureJs
   };
 
   if (needAsr) {
-    await run(1, "Transcribing audio (Parakeet TDT v2)", ["transcribe", input, "--model-version", "v2", "--output-json", `${base}.asr.json`]);
+    await run(1, "Transcribing audio (Parakeet TDT v2)", ["transcribe", input, "--model-version", "v2", "--output-json", asrPath]);
   }
   if (needDiar) {
-    await run(2, "Detecting speakers (offline VBx)", ["process", input, "--mode", "offline", "--output", `${base}.diar.json`]);
+    await run(2, "Detecting speakers (offline VBx)", ["process", input, "--mode", "offline", "--output", diarPath]);
   }
 }
 
 /** Load cached ASR, diarization, and labels without rerunning inference. */
 export async function loadMeeting(input: string, base: string): Promise<MeetingData> {
   await ensureJsons(input, base);
-  const asr = (await Bun.file(`${base}.asr.json`).json()) as AsrJson;
-  const diar = (await Bun.file(`${base}.diar.json`).json()) as DiarJson;
+  const asr = (await Bun.file(artifactPath(base, "asr.json")).json()) as AsrJson;
+  const diar = (await Bun.file(artifactPath(base, "diar.json")).json()) as DiarJson;
   const segments = diar.segments.map((segment) => ({
     speakerId: segment.speakerId,
     start: segment.startTimeSeconds,
@@ -102,14 +111,16 @@ export async function loadMeeting(input: string, base: string): Promise<MeetingD
 
 /** Write all exports from the current authoritative label state. */
 export async function emitOutputs(meeting: MeetingData): Promise<void> {
+  await migrateLegacyArtifacts(meeting.base);
   const utterances = buildUtterances(meeting.words, meeting.segments, meeting.state.overrides);
   const ranks = speakerRanks(meeting.segments);
   const label = (id: string) => displayName(id, meeting.state, ranks);
   const ids = [...ranks.keys()];
+  await mkdir(artifactDir(meeting.base), { recursive: true });
   await Promise.all([
-    Bun.write(`${meeting.base}.srt`, renderSrt(utterances, label)),
-    Bun.write(`${meeting.base}.vtt`, renderVtt(utterances, label)),
-    Bun.write(`${meeting.base}.md`, renderMd(utterances, label, meeting.sourceName, ids)),
+    Bun.write(artifactPath(meeting.base, "transcript.srt"), renderSrt(utterances, label)),
+    Bun.write(artifactPath(meeting.base, "transcript.vtt"), renderVtt(utterances, label)),
+    Bun.write(markdownPath(meeting.base), renderMd(utterances, label, meeting.sourceName, ids)),
   ]);
 }
 

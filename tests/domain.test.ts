@@ -7,9 +7,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { rm } from "node:fs/promises";
 import {
   buildUtterances,
+  artifactDir,
+  artifactPath,
   createLabelState,
   displayName,
   loadSidecar,
+  migrateLegacyArtifacts,
+  markdownPath,
   speakerRanks,
   type Segment,
   type WordTiming,
@@ -31,9 +35,14 @@ const words: WordTiming[] = [
 ];
 
 const temporaryBases: string[] = [];
+const legacyArtifactSuffixes = ["asr.json", "diar.json", "labels.json", "srt", "vtt", "md"];
 
 afterEach(async () => {
-  await Promise.all(temporaryBases.splice(0).map((base) => rm(base, { recursive: true, force: true })));
+  const paths = temporaryBases.splice(0).flatMap((base) => [
+    artifactDir(base),
+    ...legacyArtifactSuffixes.map((suffix) => `${base}.${suffix}`),
+  ]);
+  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
 });
 
 function fixtureMeeting(base = `/tmp/transcriber-test-${crypto.randomUUID()}`) {
@@ -86,8 +95,8 @@ describe("speaker label actions", () => {
 describe("sidecar and export integration", () => {
   it("loads cached data and writes compatible labeled outputs", async () => {
     const meeting = fixtureMeeting();
-    await Bun.write(`${meeting.base}.asr.json`, JSON.stringify({ audioFile: "meeting.mp4", text: "first middle last", wordTimings: words }));
-    await Bun.write(`${meeting.base}.diar.json`, JSON.stringify({ segments: segments.map((segment) => ({
+    await Bun.write(artifactPath(meeting.base, "asr.json"), JSON.stringify({ audioFile: "meeting.mp4", text: "first middle last", wordTimings: words }));
+    await Bun.write(artifactPath(meeting.base, "diar.json"), JSON.stringify({ segments: segments.map((segment) => ({
       speakerId: segment.speakerId,
       startTimeSeconds: segment.start,
       endTimeSeconds: segment.end,
@@ -96,10 +105,45 @@ describe("sidecar and export integration", () => {
     loaded.state.names.set("SPEAKER_00", "Ada");
     await import("../src/pipeline.ts").then(({ saveMeeting }) => saveMeeting(loaded));
 
-    expect(await Bun.file(`${meeting.base}.srt`).text()).toContain("Ada: first");
-    expect(await Bun.file(`${meeting.base}.vtt`).text()).toContain("S2: middle");
-    expect(await Bun.file(`${meeting.base}.md`).text()).toContain("# Transcript — meeting.mp4");
+    expect(await Bun.file(artifactPath(meeting.base, "transcript.srt")).text()).toContain("Ada: first");
+    expect(await Bun.file(artifactPath(meeting.base, "transcript.vtt")).text()).toContain("S2: middle");
+    expect(await Bun.file(markdownPath(meeting.base)).text()).toContain("# Transcript — meeting.mp4");
+    expect(await Bun.file(artifactPath(meeting.base, "transcript.md")).exists()).toBe(false);
     expect((await loadSidecar(meeting.base)).names.get("SPEAKER_00")).toBe("Ada");
+  });
+
+  it("moves legacy flat artifacts without losing cached labels", async () => {
+    const meeting = fixtureMeeting();
+    await Bun.write(`${meeting.base}.asr.json`, JSON.stringify({ audioFile: "meeting.mp4", text: "first middle last", wordTimings: words }));
+    await Bun.write(`${meeting.base}.diar.json`, JSON.stringify({ segments: segments.map((segment) => ({
+      speakerId: segment.speakerId,
+      startTimeSeconds: segment.start,
+      endTimeSeconds: segment.end,
+    })) }));
+    await Bun.write(`${meeting.base}.labels.json`, JSON.stringify({
+      audio: "meeting.mp4",
+      names: { SPEAKER_00: "Ada" },
+      overrides: {},
+      saved: "2026-09-10T00:00:00.000Z",
+    }));
+    await Bun.write(`${meeting.base}.srt`, "legacy srt");
+    await Bun.write(`${meeting.base}.vtt`, "legacy vtt");
+    await Bun.write(`${meeting.base}.md`, "legacy markdown");
+
+    await migrateLegacyArtifacts(meeting.base);
+    const loaded = await loadMeeting("meeting.mp4", meeting.base);
+
+    expect(loaded.state.names.get("SPEAKER_00")).toBe("Ada");
+    for (const suffix of legacyArtifactSuffixes.filter((suffix) => suffix !== "md")) {
+      expect(await Bun.file(`${meeting.base}.${suffix}`).exists()).toBe(false);
+    }
+    expect(await Bun.file(`${meeting.base}.md`).exists()).toBe(true);
+    expect(await Bun.file(artifactPath(meeting.base, "asr.json")).exists()).toBe(true);
+    expect(await Bun.file(artifactPath(meeting.base, "diar.json")).exists()).toBe(true);
+    expect(await Bun.file(artifactPath(meeting.base, "labels.json")).exists()).toBe(true);
+    expect(await Bun.file(artifactPath(meeting.base, "transcript.srt")).text()).toBe("legacy srt");
+    expect(await Bun.file(artifactPath(meeting.base, "transcript.vtt")).text()).toBe("legacy vtt");
+    expect(await Bun.file(markdownPath(meeting.base)).text()).toBe("legacy markdown");
   });
 });
 

@@ -10,6 +10,7 @@ import { rm } from "node:fs/promises";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import { render } from "@opentui/solid";
+import { artifactDir, artifactPath, markdownPath } from "../src/domain.ts";
 import { LabelingApp, renderLabelingFrame } from "../src/tui/app.tsx";
 import { createUiState, LabelSession } from "../src/tui/model.ts";
 import type { MeetingData } from "../src/pipeline.ts";
@@ -18,12 +19,10 @@ const temporaryBases: string[] = [];
 
 afterEach(async () => {
   const paths = temporaryBases.splice(0).flatMap((base) => [
-    `${base}.srt`,
-    `${base}.vtt`,
-    `${base}.md`,
-    `${base}.labels.json`,
+    artifactDir(base),
+    markdownPath(base),
   ]);
-  await Promise.all(paths.map((path) => rm(path, { force: true })));
+  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
 });
 
 function fixture(base = "/tmp/representative"): MeetingData {
@@ -298,8 +297,21 @@ describe("OpenTUI speaker labeling tree", () => {
     const keymap = createDefaultOpenTuiKeymap(setup.renderer);
     const session = new LabelSession(fixture(base));
     const results: string[] = [];
+    let resolveSave!: () => void;
+    const saveFinished = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
     try {
-      await render(() => <LabelingApp session={session} keymap={keymap} finish={(result) => results.push(result)} />, setup.renderer);
+      await render(() => (
+        <LabelingApp
+          session={session}
+          keymap={keymap}
+          finish={(result) => {
+            results.push(result);
+            if (result === "saved") resolveSave();
+          }}
+        />
+      ), setup.renderer);
       await setup.renderOnce();
       await setup.mockInput.pressEnter();
       await setup.flush();
@@ -308,14 +320,16 @@ describe("OpenTUI speaker labeling tree", () => {
       setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
-      setup.mockInput.pressKey("s");
+      await setup.mockInput.pressKeys(["s"]);
       await setup.flush();
+      await saveFinished;
 
       expect(results).toEqual(["saved"]);
-      expect(await Bun.file(`${base}.srt`).text()).toContain("Nathan: thanks");
-      expect(await Bun.file(`${base}.vtt`).text()).toContain("S2: Ada");
-      expect(await Bun.file(`${base}.md`).text()).toContain("# Transcript");
-      expect(await Bun.file(`${base}.labels.json`).exists()).toBe(true);
+      expect(await Bun.file(artifactPath(base, "transcript.srt")).text()).toContain("Nathan: thanks");
+      expect(await Bun.file(artifactPath(base, "transcript.vtt")).text()).toContain("S2: Ada");
+      expect(await Bun.file(markdownPath(base)).text()).toContain("# Transcript");
+      expect(await Bun.file(artifactPath(base, "transcript.md")).exists()).toBe(false);
+      expect(await Bun.file(artifactPath(base, "labels.json")).exists()).toBe(true);
     } finally {
       setup.renderer.destroy();
     }

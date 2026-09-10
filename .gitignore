@@ -1,4 +1,5 @@
 # Generated transcript artifacts
+*.artifacts/
 *.asr.json
 *.diar.json
 *.labels.json

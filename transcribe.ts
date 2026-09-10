@@ -6,7 +6,7 @@
  * documented `bun transcribe.ts <recording> [--no-tui]` interface.
  */
 
-import { displayName, speakerRanks } from "./src/domain.ts";
+import { artifactPath, displayName, markdownPath, speakerRanks } from "./src/domain.ts";
 import { loadMeeting, saveMeeting } from "./src/pipeline.ts";
 import { runTui } from "./src/tui/app.tsx";
 
@@ -31,7 +31,8 @@ export function parseArgs(argv: string[]): Settings | null {
 function printSavedSummary(base: string, input: string, state: Parameters<typeof displayName>[1], segments: Parameters<typeof speakerRanks>[0]): void {
   const ranks = speakerRanks(segments);
   console.log(
-    `Saved:\n  ${base}.srt · ${base}.vtt · ${base}.md · ${base}.labels.json\n` +
+    `Saved:\n  ${artifactPath(base, "transcript.srt")} · ${artifactPath(base, "transcript.vtt")} · ` +
+      `${markdownPath(base)} · ${artifactPath(base, "labels.json")}\n` +
       `  ${ranks.size} speakers: ${[...ranks.keys()].map((id) => displayName(id, state, ranks)).join(" · ")}\n` +
       `Reopen anytime: bun transcribe.ts ${input}   (instant — reuses cached JSONs)`,
   );
@@ -53,7 +54,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       await saveMeeting(meeting);
       const ranks = speakerRanks(meeting.segments);
       console.log(
-        `Saved: ${base}.srt · ${base}.vtt · ${base}.md — ${ranks.size} speakers: ` +
+        `Saved: ${artifactPath(base, "transcript.srt")} · ${artifactPath(base, "transcript.vtt")} · ` +
+          `${markdownPath(base)} — ${ranks.size} speakers: ` +
           [...ranks.keys()].map((id) => displayName(id, meeting.state, ranks)).join(" · "),
       );
       return;

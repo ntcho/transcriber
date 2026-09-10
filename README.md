@@ -44,10 +44,12 @@ swift build -c release --product fluidaudiocli   # ~2 min on M4 Max
 bun transcribe.ts meeting.mp4
 ```
 
-1. Missing `.asr.json` / `.diar.json` → runs the FluidAudio CLI with concise progress output
+1. Missing `<stem>.artifacts/asr.json` / `diar.json` → runs the FluidAudio CLI with concise progress output
 2. Opens the OpenTUI/Solid speaker-labeling workflow (SPEC.md): rename
    speakers, merge split speakers, reassign individual utterances, undo
-3. `s` writes `.srt`, `.vtt`, `.md`, `.labels.json` next to the recording
+3. `s` writes `transcript.srt`, `transcript.vtt`, and `labels.json` inside
+   `<stem>.artifacts/`, while the Markdown export stays beside the recording
+   as `<stem>.md`
 
 Reopening a recording with cached JSONs is instant (labels replay from the
 sidecar — inference never re-runs). `--no-tui` skips the TUI for headless/agent use.
@@ -60,12 +62,29 @@ labels; `s` saves all outputs and exits.
 
 ```bash
 BIN=~/Applications/FluidAudio/.build/release/fluidaudiocli
+mkdir -p <base>.artifacts
 
 # ASR with word timestamps (English-only v2)
-$BIN transcribe <file> --model-version v2 --output-json <base>.asr.json
+$BIN transcribe <file> --model-version v2 --output-json <base>.artifacts/asr.json
 # Speaker diarization (offline VBx pipeline)
-$BIN process <file> --mode offline --output <base>.diar.json
+$BIN process <file> --mode offline --output <base>.artifacts/diar.json
 ```
+
+## Generated artifacts
+
+For `meeting.mp4`, the generated directory is `meeting.artifacts/`, and the
+Markdown export is `meeting.md`. The directory can be deleted as one unit
+without touching the recording. The JSON files are the resumable state:
+`asr.json` and `diar.json` avoid re-running inference, while `labels.json`
+preserves speaker names and reassignment overrides.
+
+SRT and WebVTT are independent exports that the application does not need to
+reopen a meeting; the save action writes both together. Delete either format
+if you do not need it; it will be regenerated on the next save or headless
+export. Deleting the artifact directory causes inference to run again and
+starts without saved labels; `meeting.md` remains until deleted separately.
+Existing flat JSON, SRT, and WebVTT artifacts are moved into this directory on
+the next invocation, while an existing flat Markdown export stays in place.
 
 ## Notes
 
