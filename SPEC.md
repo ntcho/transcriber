@@ -97,7 +97,7 @@ re-runs inference. `--no-tui` applies the sidecar and emits outputs directly.
 │       "I can own the follow-ups for the…                                │
 │                                                                         │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ ↑↓ select · r rename · m merge · ⏎ audit · u undo · s save · q quit     │
+│ ↑↓ select · → audit · Enter rename · m merge · u undo · s save · q quit │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -131,7 +131,7 @@ Pre-filled with the current name (empty if `?`); typing replaces it.
 Lists other speakers only. Enter merges immediately (all S3 utterances become
 S1's; snippets, bar, and counts recompute; undo restores).
 
-### 4. Audit screen — idle (Enter from speaker screen)
+### 4. Audit screen — idle (Right from speaker screen)
 
 ```
 ┌ S1 Nathan · 14 utterances · 12:03 talk ────────────────────── ● unsaved ┐
@@ -142,14 +142,14 @@ S1's; snippets, bar, and counts recompute; undo restores).
 │   [11:03] right, and the follow-up from last week…                      │
 │                                                                         │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ ↑↓ select · v expand · a reassign · Esc back · u undo                   │
+│ ↑↓ select · Enter expand · a reassign · ← back · u undo                 │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 One line per utterance — 14 utterances ≈ 14 rows, no scrolling for most
 speakers. Scrolls only when a speaker genuinely has more utterances than fit.
 
-### 5. Audit — expanded utterance (v toggles the cursor utterance)
+### 5. Audit — expanded utterance (Enter toggles the cursor utterance)
 
 ```
  ▸ [00:00] thanks everyone for hopping on, I know it's early, so I
@@ -202,17 +202,17 @@ as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
 
 | Screen  | Key | Action |
 |---------|-----|--------|
-| both    | ↑/↓ or j/k | move cursor |
+| both    | ↑/↓ | move cursor |
 | both    | u | undo |
 | both    | ctrl-c | quit (asks if unsaved) |
-| speaker | r | rename selected speaker |
+| speaker | Enter | rename selected speaker |
 | speaker | m | merge selected speaker into… |
-| speaker | ⏎ | audit selected speaker |
+| speaker | → | audit selected speaker |
 | speaker | s | save all outputs |
 | speaker | q | quit |
-| audit   | v | expand/collapse cursor utterance |
+| audit   | Enter | expand/collapse cursor utterance |
 | audit   | a | reassign cursor utterance to… |
-| audit   | Esc | back to speaker screen |
+| audit   | ← | back to speaker screen |
 | pickers | ↑/↓, Enter, Esc | navigate, confirm, cancel |
 | prompts | chars, ⌫, Enter, Esc | edit, confirm, cancel |
 

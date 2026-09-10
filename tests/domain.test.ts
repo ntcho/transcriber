@@ -105,24 +105,28 @@ describe("sidecar and export integration", () => {
 
 describe("framework-independent keymap mapping", () => {
   it("keeps mode precedence and cancellation explicit", () => {
-    expect(commandForKey("speakers", "return")).toBe("speaker.audit");
+    expect(commandForKey("speakers", "right")).toBe("speaker.audit");
+    expect(commandForKey("speakers", "return")).toBe("speaker.rename");
     expect(commandForKey("audit", "escape")).toBe("view.back");
+    expect(commandForKey("audit", "left")).toBe("view.back");
+    expect(commandForKey("audit", "return")).toBe("audit.expand");
     expect(commandForKey("rename", "escape")).toBe("prompt.cancel");
     expect(commandForKey("merge", "return")).toBe("picker.confirm");
     expect(commandForKey("confirm-quit", "n")).toBe("quit.discard");
-    expect(commandForKey("rename", "j")).toBeUndefined();
+    expect(commandForKey("speakers", "j")).toBeUndefined();
+    expect(commandForKey("speakers", "r")).toBeUndefined();
+    expect(commandForKey("audit", "v")).toBeUndefined();
   });
 
   it("preserves navigation and editing bindings in every mode", () => {
     expect(commandForKey("speakers", "up")).toBe("cursor.up");
-    expect(commandForKey("speakers", "j")).toBe("cursor.down");
     expect(commandForKey("speakers", "u")).toBe("label.undo");
-    expect(commandForKey("speakers", "r")).toBe("speaker.rename");
+    expect(commandForKey("speakers", "return")).toBe("speaker.rename");
     expect(commandForKey("speakers", "m")).toBe("speaker.merge");
     expect(commandForKey("speakers", "s")).toBe("file.save");
     expect(commandForKey("speakers", "q")).toBe("app.quit");
-    expect(commandForKey("audit", "k")).toBe("cursor.up");
-    expect(commandForKey("audit", "v")).toBe("audit.expand");
+    expect(commandForKey("audit", "left")).toBe("view.back");
+    expect(commandForKey("audit", "return")).toBe("audit.expand");
     expect(commandForKey("audit", "a")).toBe("audit.reassign");
     expect(commandForKey("merge", "down")).toBe("cursor.down");
     expect(commandForKey("merge", "return")).toBe("picker.confirm");

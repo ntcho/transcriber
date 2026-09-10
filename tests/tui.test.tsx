@@ -100,7 +100,7 @@ describe("OpenTUI speaker labeling tree", () => {
       );
       await setup.renderOnce();
       await setup.flush();
-      await setup.mockInput.pressKeys(["r"]);
+      await setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
       await setup.mockInput.typeText("Nathan");
@@ -132,7 +132,7 @@ describe("OpenTUI speaker labeling tree", () => {
     try {
       await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
       await setup.renderOnce();
-      await setup.mockInput.pressKeys(["r"]);
+      await setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
       await setup.mockInput.typeText("Grace");
@@ -186,7 +186,7 @@ describe("OpenTUI speaker labeling tree", () => {
     try {
       await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
       await setup.renderOnce();
-      await setup.mockInput.pressEnter();
+      await setup.mockInput.pressArrow("right");
       await setup.flush();
       const auditFrame = await setup.waitForFrame((current) => current.includes("thanks") && current.includes("followup"));
       expect(auditFrame).toContain("thanks");
@@ -207,10 +207,10 @@ describe("OpenTUI speaker labeling tree", () => {
       ]);
       expect(session.utterances[0]!.words).toEqual(["thanks", "Ada"]);
 
-      setup.mockInput.pressEscape();
+      setup.mockInput.pressArrow("left");
       await setup.flush();
       await setup.renderOnce();
-      expect(await setup.waitForFrame((current) => current.includes("v expand") && !current.includes("reassign to:"))).toContain("v expand");
+      expect(await setup.waitForFrame((current) => current.includes("Right audit") && !current.includes("reassign to:"))).toContain("Right audit");
     } finally {
       setup.renderer.destroy();
     }
@@ -223,13 +223,13 @@ describe("OpenTUI speaker labeling tree", () => {
     try {
       await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
       await setup.renderOnce();
-      setup.mockInput.pressEnter();
+      setup.mockInput.pressArrow("right");
       await setup.flush();
       await setup.renderOnce();
       const collapsed = await setup.waitForFrame((frame) => frame.includes("[00:00]"));
       expect(collapsed).not.toContain("nine ten");
 
-      setup.mockInput.pressKey("v");
+      setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
       expect(await setup.waitForFrame((frame) => frame.includes("nine ten"))).toContain("nine ten");
@@ -266,7 +266,7 @@ describe("OpenTUI speaker labeling tree", () => {
     try {
       await render(() => <LabelingApp session={session} keymap={keymap} finish={(result) => results.push(result)} />, setup.renderer);
       await setup.renderOnce();
-      await setup.mockInput.pressKeys(["r"]);
+      await setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
       await setup.mockInput.typeText("Nathan");
@@ -307,7 +307,7 @@ describe("OpenTUI speaker labeling tree", () => {
     try {
       await render(() => <LabelingApp session={editedSession} keymap={editedKeymap} finish={(result) => editedResults.push(result)} />, editedSetup.renderer);
       await editedSetup.renderOnce();
-      await editedSetup.mockInput.pressKeys(["r"]);
+      await editedSetup.mockInput.pressEnter();
       await editedSetup.flush();
       await editedSetup.renderOnce();
       await editedSetup.mockInput.typeText("Nathan");

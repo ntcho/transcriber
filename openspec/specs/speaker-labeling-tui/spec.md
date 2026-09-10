@@ -21,7 +21,7 @@ The system SHALL open the interactive speaker-labeling workflow for the default 
 
 ### Requirement: Review speakers and navigate the labeling workflow
 
-The system SHALL show a speaker overview with ranked speakers, display names or unknown markers, talk-time summaries, utterance counts, timestamps, representative snippets, and an unsaved indicator. Users SHALL be able to navigate speaker and utterance lists with arrow keys or `j`/`k`, enter an audit view for the selected speaker, and return from audit view to the speaker overview.
+The system SHALL show a speaker overview with ranked speakers, display names or unknown markers, talk-time summaries, utterance counts, timestamps, representative snippets, and an unsaved indicator. Users SHALL be able to navigate speaker and utterance lists with Up/Down, open the selected speaker's audit view with Right, and return to the speaker overview with Left.
 
 #### Scenario: Review speaker summaries
 
@@ -30,21 +30,21 @@ The system SHALL show a speaker overview with ranked speakers, display names or 
 
 #### Scenario: Navigate and audit a speaker
 
-- **WHEN** a user moves through the speaker list and presses Enter on a selected speaker
+- **WHEN** a user moves through the speaker list and presses Right on a selected speaker
 - **THEN** the cursor moves within the available list and the system opens an utterance audit view for that speaker
 
 #### Scenario: Return from audit
 
-- **WHEN** a user presses Escape from the audit view
+- **WHEN** a user presses Left from the audit view
 - **THEN** the system returns to the speaker overview with the current label state intact
 
 ### Requirement: Rename and merge speakers
 
-The system SHALL allow a user to rename the selected speaker with an editable prompt prefilled with the current name when one exists. It SHALL allow a user to merge the selected speaker into another speaker, excluding the selected speaker from the target list, and SHALL recompute affected summaries after the merge. Enter SHALL confirm and Escape SHALL cancel either operation.
+The system SHALL allow a user to rename the selected speaker by pressing Enter, with an editable prompt prefilled with the current name when one exists. It SHALL allow a user to merge the selected speaker into another speaker, excluding the selected speaker from the target list, and SHALL recompute affected summaries after the merge. Enter SHALL confirm and Escape SHALL cancel either operation once a prompt or picker is open.
 
 #### Scenario: Rename a speaker
 
-- **WHEN** a user selects a speaker, starts rename, edits the prompt, and confirms with Enter
+- **WHEN** a user selects a speaker, presses Enter to start rename, edits the prompt, and confirms with Enter
 - **THEN** the new name is assigned to that speaker, the overview reflects the name, and the session is marked unsaved
 
 #### Scenario: Cancel a rename
@@ -63,7 +63,7 @@ The system SHALL display one row per utterance in audit view, support expanding 
 
 #### Scenario: Expand an utterance
 
-- **WHEN** a user selects an utterance and presses `v`
+- **WHEN** a user selects an utterance and presses Enter
 - **THEN** the utterance toggles between its collapsed single-line form and its wrapped expanded form
 
 #### Scenario: Reassign an utterance

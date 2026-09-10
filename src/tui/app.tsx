@@ -124,7 +124,7 @@ function speakerFrame(session: LabelSession, ui: UiState): string {
       ? "type name | Enter confirm | Esc cancel"
       : mode.kind === "merge"
         ? "Up/Down target | Enter merge | Esc cancel"
-        : "Up/Down select | r rename | m merge | Enter audit | u undo | s save+exit | q quit";
+        : "Up/Down select | Right audit | Enter rename | m merge | u undo | s save+exit | q quit";
   return [
     `${header} ${ui.dirty ? "[unsaved]" : "[saved]"}`,
     ...view,
@@ -168,7 +168,7 @@ function auditFrame(session: LabelSession, ui: UiState): string {
     ? "save before quitting? (y/n)"
     : mode.kind === "reassign"
       ? "Up/Down target | Enter reassign | Esc cancel"
-      : "Up/Down select | v expand | a reassign | Esc back | u undo";
+      : "Up/Down select | Enter expand | a reassign | Left back | u undo";
   return [header, ...view, "-".repeat(Math.max(1, cols)), `${footer}${ui.status ? ` | ${ui.status}` : ""}`].join("\n");
 }
 
