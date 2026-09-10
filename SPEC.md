@@ -182,7 +182,7 @@ Reopen anytime:  bun transcribe.ts meeting.mp4   (instant — reuses cached JSON
 ```
 
 Outputs use display names where set, else `S<rank>`; unnamed speakers render
-as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
+as `?` in Markdown transcript paragraphs. `q` with unsaved changes asks
 `save before quitting? (y/n)`.
 
 ### Pipeline progress (only when JSONs are missing)
@@ -221,8 +221,13 @@ as `?` in the Markdown header's rename hint. `q` with unsaved changes asks
 
 ## Output formats
 
-SRT cues per utterance, WebVTT header + cues, and a Markdown linear log with
-`[MM:SS] label:` bullets and a speaker legend. The Bun script owns this logic
+SRT cues per utterance, WebVTT header + cues, and Markdown transcript paragraphs
+only. Markdown merges adjacent utterances with the same speaker identity,
+uses the first utterance's timestamp, and joins their text with single spaces.
+Paragraph timestamps use zero-padded `MM:SS` through `60:00`, then
+`HH:MM:SS` after one hour. Each paragraph has the form
+`timestamp **speaker:** text`, paragraphs are separated by one blank line, and
+the file ends with a newline. The Bun script owns this logic
 for both interactive and headless use. ASR and diarization JSONs plus the label
 sidecar are required to resume without re-inference; the SRT, WebVTT, and
 Markdown files are optional exports that can be regenerated.

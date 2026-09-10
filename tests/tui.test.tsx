@@ -83,6 +83,41 @@ describe("OpenTUI speaker labeling tree", () => {
     }
   });
 
+  it("renders and audits an unattributed speaker row", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 24 });
+    const keymap = createDefaultOpenTuiKeymap(setup.renderer);
+    const meeting = fixture();
+    meeting.words = [
+      { word: "known", startTime: 0, endTime: 0.4 },
+      { word: "orphan", startTime: 4, endTime: 4.4 },
+    ];
+    meeting.segments = [{ speakerId: "SPEAKER_00", start: 0, end: 1 }];
+    const session = new LabelSession(meeting);
+    try {
+      await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
+      await setup.renderOnce();
+
+      expect(setup.captureCharFrame()).toContain("?  unattributed");
+
+      await setup.mockInput.pressArrow("down");
+      await setup.flush();
+      await setup.mockInput.pressArrow("right");
+      await setup.flush();
+
+      expect(await setup.waitForFrame((frame) => frame.includes("orphan"))).toContain("orphan");
+
+      await setup.mockInput.pressKeys(["a"]);
+      await setup.flush();
+      expect(await setup.waitForFrame((frame) => frame.includes("reassign to:"))).toContain("reassign to:");
+
+      await setup.mockInput.pressEnter();
+      await setup.flush();
+      expect(session.utterances.every((utterance) => utterance.speakerId === "SPEAKER_00")).toBe(true);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   it("routes rename and unsaved quit through keymap commands", async () => {
     const setup = await createTestRenderer({ width: 80, height: 20 });
     const keymap = createDefaultOpenTuiKeymap(setup.renderer);
@@ -327,7 +362,11 @@ describe("OpenTUI speaker labeling tree", () => {
       expect(results).toEqual(["saved"]);
       expect(await Bun.file(artifactPath(base, "transcript.srt")).text()).toContain("Nathan: thanks");
       expect(await Bun.file(artifactPath(base, "transcript.vtt")).text()).toContain("S2: Ada");
-      expect(await Bun.file(markdownPath(base)).text()).toContain("# Transcript");
+      expect(await Bun.file(markdownPath(base)).text()).toBe(
+        "00:00 **Nathan:** thanks\n\n" +
+        "00:01 **?:** Ada\n\n" +
+        "00:02 **Nathan:** followup\n",
+      );
       expect(await Bun.file(artifactPath(base, "transcript.md")).exists()).toBe(false);
       expect(await Bun.file(artifactPath(base, "labels.json")).exists()).toBe(true);
     } finally {

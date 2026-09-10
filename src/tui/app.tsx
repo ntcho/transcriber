@@ -112,6 +112,17 @@ function currentSpeakerIds(session: LabelSession): string[] {
   return session.summaries.map((summary) => summary.id);
 }
 
+/** Render real speaker ranks and the synthetic unattributed-speaker marker. */
+function speakerTag(id: string, rank?: number): string {
+  return id === "?" ? "?" : `S${rank ?? "?"}`;
+}
+
+/** Give the synthetic unattributed row a useful name without changing labels. */
+function speakerName(id: string, name?: string): string {
+  if (name && name !== "?") return name;
+  return id === "?" ? "unattributed" : "?";
+}
+
 /** Return current utterances for one speaker after live regrouping. */
 function speakerUtterances(session: LabelSession, speakerId: string): Utterance[] {
   return session.utterances.filter((utterance) => utterance.speakerId === speakerId);
@@ -131,20 +142,21 @@ function speakerBody(session: LabelSession, ui: UiState, height: number): string
   const body: string[] = [];
   let cursorRow = 0;
   summaries.forEach((summary, index) => {
+    const name = speakerName(summary.id, summary.assignedName);
     if ((mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge") && index === mode.cursor) {
       cursorRow = body.length;
     }
     const cursor = (mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge") && index === mode.cursor ? SYMBOLS.cursor : " ";
-    body.push(` ${cursor} S${summary.rank}  ${truncate(summary.assignedName, columns.name).padEnd(columns.name)} ${talkBar(summary.share, columns.bar)}  ${fmtShort(summary.talkSeconds)} (${Math.round(summary.share * 100)}%)`);
+    body.push(` ${cursor} ${speakerTag(summary.id, summary.rank)}  ${truncate(name, columns.name).padEnd(columns.name)} ${talkBar(summary.share, columns.bar)}  ${fmtShort(summary.talkSeconds)} (${Math.round(summary.share * 100)}%)`);
     body.push(`     ${summary.utteranceCount} ${summary.utteranceCount === 1 ? "utt" : "utts"} | first ${fmtShort(summary.firstStart)} | last ${fmtShort(summary.lastEnd)}`);
     body.push(`     ${truncate(`"${summary.snippets[0] ?? ""}"`, Math.max(1, cols - 7))}`);
     if (summary.snippets[1]) body.push(`     ${truncate(`"${summary.snippets[1]}"`, Math.max(1, cols - 7))}`);
     if (mode.kind === "rename" && mode.cursor === index) {
-      body.push(`     rename S${summary.rank} ${SYMBOLS.arrowRight} ${mode.buffer}${SYMBOLS.cursor}`);
+      body.push(`     rename ${speakerTag(summary.id, summary.rank)} ${SYMBOLS.arrowRight} ${mode.buffer}${SYMBOLS.cursor}`);
     } else if (mode.kind === "merge" && mode.cursor === index) {
-      body.push(`     merge S${summary.rank} into:`);
+      body.push(`     merge ${speakerTag(summary.id, summary.rank)} into:`);
       summaries.filter((target) => target.id !== summary.id).forEach((target, pick) => {
-        body.push(`     ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} S${target.rank}  ${target.assignedName}`);
+        body.push(`     ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} ${speakerTag(target.id, target.rank)}  ${speakerName(target.id, target.assignedName)}`);
       });
     }
     body.push("");
@@ -175,7 +187,7 @@ function auditBody(session: LabelSession, ui: UiState, height: number): string {
     if (mode.kind === "reassign" && index === mode.cursor) {
       body.push("   reassign to:");
       ids.filter((id) => id !== mode.speakerId).forEach((id, pick) => {
-        body.push(`   ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} S${ranks.get(id) ?? "?"}  ${session.state.names.get(id) ?? "?"}`);
+        body.push(`   ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} ${speakerTag(id, ranks.get(id))}  ${speakerName(id, session.state.names.get(id))}`);
       });
     }
   });
@@ -191,14 +203,18 @@ function headerText(session: LabelSession, ui: UiState): string {
   if (mode.kind === "audit" || mode.kind === "reassign") {
     const mine = speakerUtterances(session, mode.speakerId);
     const ranks = speakerRanks(session.meeting.segments);
-    const name = session.state.names.get(mode.speakerId) ?? "?";
+    const name = speakerName(mode.speakerId, session.state.names.get(mode.speakerId));
     const talk = mine.reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
-    return truncate(`${state} · S${ranks.get(mode.speakerId) ?? "?"} ${name} · ${mine.length} ${mine.length === 1 ? "utterance" : "utterances"} · ${fmtShort(talk)} talk`, Math.max(1, ui.cols));
+    return truncate(`${state} · ${speakerTag(mode.speakerId, ranks.get(mode.speakerId))} ${name} · ${mine.length} ${mine.length === 1 ? "utterance" : "utterances"} · ${fmtShort(talk)} talk`, Math.max(1, ui.cols));
   }
   const end = session.utterances.at(-1)?.end ?? 0;
   const summaries = session.summaries;
-  const unlabeled = summaries.filter((summary) => summary.assignedName === "?").length;
-  return truncate(`${state} · ${session.meeting.sourceName} · ${fmtShort(end)} · ${summaries.length} ${summaries.length === 1 ? "speaker" : "speakers"} · unlabeled ${unlabeled}`, Math.max(1, ui.cols));
+  const realSpeakers = summaries.filter((summary) => summary.id !== "?");
+  const unattributed = summaries.find((summary) => summary.id === "?");
+  const unlabeled = realSpeakers.filter((summary) => summary.assignedName === "?").length;
+  const speakerCount = realSpeakers.length;
+  const unattributedHint = unattributed ? ` · ${unattributed.utteranceCount} unattributed` : "";
+  return truncate(`${state} · ${session.meeting.sourceName} · ${fmtShort(end)} · ${speakerCount} ${speakerCount === 1 ? "speaker" : "speakers"}${unattributedHint} · unlabeled ${unlabeled}`, Math.max(1, ui.cols));
 }
 
 /** Return the footer key hints and current status for the active mode. */
@@ -361,7 +377,7 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
       if (!speakerId || !targetId) return;
       props.session.apply({ kind: "merge", speakerId, targetId });
       setMode({ kind: "speakers", cursor: clampCursor(mode.cursor, props.session.summaries.length) });
-      touch(`merged into S${speakerRanks(props.session.meeting.segments).get(targetId) ?? "?"}`);
+      touch(`merged into ${speakerTag(targetId, speakerRanks(props.session.meeting.segments).get(targetId))}`);
     } else if (mode.kind === "reassign") {
       const mine = speakerUtterances(props.session, mode.speakerId);
       const utterance = mine[clampCursor(mode.cursor, mine.length)];

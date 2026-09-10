@@ -10,12 +10,15 @@ import {
   artifactDir,
   artifactPath,
   createLabelState,
+  deriveSpeakerSummaries,
   displayName,
   loadSidecar,
   migrateLegacyArtifacts,
   markdownPath,
+  renderMd,
   speakerRanks,
   type Segment,
+  type Utterance,
   type WordTiming,
 } from "../src/domain.ts";
 import { loadMeeting } from "../src/pipeline.ts";
@@ -90,6 +93,20 @@ describe("speaker label actions", () => {
     expect(displayName("SPEAKER_00", createLabelState(), ranks)).toBe("S1");
     expect(displayName("SPEAKER_01", createLabelState(), ranks)).toBe("S2");
   });
+
+  it("keeps unattributed utterances visible in speaker summaries", () => {
+    const summaries = deriveSpeakerSummaries(
+      [
+        { word: "known", startTime: 0, endTime: 0.4 },
+        { word: "orphan", startTime: 4, endTime: 4.4 },
+      ],
+      [{ speakerId: "SPEAKER_00", start: 0, end: 1 }],
+      createLabelState(),
+    );
+
+    expect(summaries.map((summary) => summary.id)).toEqual(["SPEAKER_00", "?"]);
+    expect(summaries[1]).toMatchObject({ rank: 2, assignedName: "?", utteranceCount: 1 });
+  });
 });
 
 describe("sidecar and export integration", () => {
@@ -107,7 +124,11 @@ describe("sidecar and export integration", () => {
 
     expect(await Bun.file(artifactPath(meeting.base, "transcript.srt")).text()).toContain("Ada: first");
     expect(await Bun.file(artifactPath(meeting.base, "transcript.vtt")).text()).toContain("S2: middle");
-    expect(await Bun.file(markdownPath(meeting.base)).text()).toContain("# Transcript — meeting.mp4");
+    expect(await Bun.file(markdownPath(meeting.base)).text()).toBe(
+      "00:00 **Ada:** first\n\n" +
+      "00:01 **?:** middle\n\n" +
+      "00:02 **Ada:** last\n",
+    );
     expect(await Bun.file(artifactPath(meeting.base, "transcript.md")).exists()).toBe(false);
     expect((await loadSidecar(meeting.base)).names.get("SPEAKER_00")).toBe("Ada");
   });
@@ -144,6 +165,62 @@ describe("sidecar and export integration", () => {
     expect(await Bun.file(artifactPath(meeting.base, "transcript.srt")).text()).toBe("legacy srt");
     expect(await Bun.file(artifactPath(meeting.base, "transcript.vtt")).text()).toBe("legacy vtt");
     expect(await Bun.file(markdownPath(meeting.base)).text()).toBe("legacy markdown");
+  });
+});
+
+describe("Markdown transcript rendering", () => {
+  it("renders labeled utterances as metadata-free transcript paragraphs", () => {
+    const utterances: Utterance[] = [{
+      key: 0,
+      start: 1,
+      end: 2,
+      speakerId: "SPEAKER_00",
+      wordEnd: 0,
+      words: ["Hello"],
+    }];
+
+    const markdown = renderMd(utterances, () => "Ada");
+
+    expect(markdown).toBe("00:01 **Ada:** Hello\n");
+    expect(markdown).not.toContain("- ");
+    expect(markdown).not.toContain("[");
+    expect(markdown).not.toContain("# Transcript");
+    expect(markdown).not.toContain("Generated");
+    expect(markdown).not.toContain("rename");
+  });
+
+  it("merges adjacent same-speaker utterances without crossing boundaries", () => {
+    const utterances: Utterance[] = [
+      { key: 0, start: 1, end: 2, speakerId: "SPEAKER_00", wordEnd: 0, words: ["first"] },
+      { key: 1, start: 2.2, end: 3, speakerId: "SPEAKER_00", wordEnd: 1, words: ["second"] },
+      { key: 2, start: 3.2, end: 4, speakerId: "SPEAKER_01", wordEnd: 2, words: ["middle"] },
+      { key: 3, start: 4.2, end: 5, speakerId: "SPEAKER_00", wordEnd: 3, words: ["again"] },
+    ];
+
+    expect(renderMd(utterances, (id) => id === "SPEAKER_00" ? "Ada" : "Bob")).toBe(
+      "00:01 **Ada:** first second\n\n" +
+      "00:03 **Bob:** middle\n\n" +
+      "00:04 **Ada:** again\n",
+    );
+  });
+
+  it("keeps MM:SS through 60:00 and uses HH:MM:SS after one hour", () => {
+    const atHour: Utterance[] = [
+      { key: 0, start: 0, end: 1, speakerId: "SPEAKER_00", wordEnd: 0, words: ["start"] },
+      { key: 1, start: 3600, end: 3600, speakerId: "SPEAKER_01", wordEnd: 1, words: ["boundary"] },
+    ];
+    const afterHour: Utterance[] = [
+      { key: 0, start: 0, end: 1, speakerId: "SPEAKER_00", wordEnd: 0, words: ["start"] },
+      { key: 1, start: 3601, end: 3602, speakerId: "SPEAKER_01", wordEnd: 1, words: ["after"] },
+    ];
+    const label = (id: string) => id === "SPEAKER_00" ? "Ada" : "?";
+
+    expect(renderMd(atHour, label)).toBe(
+      "00:00 **Ada:** start\n\n60:00 **?:** boundary\n",
+    );
+    expect(renderMd(afterHour, label)).toBe(
+      "00:00:00 **Ada:** start\n\n01:00:01 **?:** after\n",
+    );
   });
 });
 

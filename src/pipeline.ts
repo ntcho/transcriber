@@ -115,12 +115,12 @@ export async function emitOutputs(meeting: MeetingData): Promise<void> {
   const utterances = buildUtterances(meeting.words, meeting.segments, meeting.state.overrides);
   const ranks = speakerRanks(meeting.segments);
   const label = (id: string) => displayName(id, meeting.state, ranks);
-  const ids = [...ranks.keys()];
+  const markdownLabel = (id: string) => meeting.state.names.get(id) || "?";
   await mkdir(artifactDir(meeting.base), { recursive: true });
   await Promise.all([
     Bun.write(artifactPath(meeting.base, "transcript.srt"), renderSrt(utterances, label)),
     Bun.write(artifactPath(meeting.base, "transcript.vtt"), renderVtt(utterances, label)),
-    Bun.write(markdownPath(meeting.base), renderMd(utterances, label, meeting.sourceName, ids)),
+    Bun.write(markdownPath(meeting.base), renderMd(utterances, markdownLabel)),
   ]);
 }
 

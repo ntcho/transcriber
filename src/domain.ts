@@ -183,7 +183,7 @@ export function fmtClock(seconds: number, comma = false): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}${separator}${pad(rest, 3)}`;
 }
 
-/** Format seconds as the compact `MM:SS` form used by the UI and Markdown. */
+/** Format seconds as the compact `MM:SS` form used by the UI. */
 export function fmtShort(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.floor(seconds % 60);
@@ -211,26 +211,32 @@ export function renderVtt(utterances: Utterance[], label: (id: string) => string
   return cues.join("\n\n") + "\n";
 }
 
-/** Render the current utterances in the existing Markdown format. */
-export function renderMd(
-  utterances: Utterance[],
-  label: (id: string) => string,
-  sourceName: string,
-  speakerIds: string[],
-): string {
+/** Format seconds for the compact Markdown timestamp. */
+function fmtMarkdownTimestamp(seconds: number, useHours: boolean): string {
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = useHours ? Math.floor((totalSeconds % 3_600) / 60) : Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return useHours ? `${pad(hours)}:${pad(minutes)}:${pad(remainder)}` : `${pad(minutes)}:${pad(remainder)}`;
+}
+
+/** Render the current utterances as Markdown transcript paragraphs. */
+export function renderMd(utterances: Utterance[], label: (id: string) => string): string {
   const lastEnd = utterances[utterances.length - 1]?.end ?? 0;
-  const lines: string[] = [
-    `# Transcript — ${sourceName}`,
-    "",
-    `Generated ${new Date().toISOString().slice(0, 16).replace("T", " ")} · ` +
-      `${fmtShort(lastEnd)} long · ${speakerIds.length} speakers ` +
-      `(${speakerIds.map(label).join(" ")} — rename manually)`,
-    "",
-  ];
+  const useHours = lastEnd > 3_600;
+  const groups: Utterance[][] = [];
   for (const utterance of utterances) {
-    lines.push(`- **[${fmtShort(utterance.start)}] ${label(utterance.speakerId)}:** ${utterance.words.join(" ")}`);
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup && lastGroup[0]!.speakerId === utterance.speakerId) lastGroup.push(utterance);
+    else groups.push([utterance]);
   }
-  return lines.join("\n") + "\n";
+  const paragraphs = groups.map((group) => {
+    const first = group[0]!;
+    const words = group.flatMap((utterance) => utterance.words).join(" ");
+    return `${fmtMarkdownTimestamp(first.start, useHours)} **${label(first.speakerId)}:** ${words}`;
+  });
+  return paragraphs.length > 0 ? paragraphs.join("\n\n") + "\n" : "";
 }
 
 /** Derive ranked speaker cards from authoritative words, segments, and labels. */
@@ -242,7 +248,9 @@ export function deriveSpeakerSummaries(
   const utterances = buildUtterances(words, segments, state.overrides);
   const ranks = speakerRanks(segments);
   const totalTalk = utterances.reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
-  return [...ranks.entries()]
+  const summaryEntries = [...ranks.entries()];
+  if (utterances.some((utterance) => utterance.speakerId === "?")) summaryEntries.push(["?", ranks.size + 1]);
+  return summaryEntries
     .map(([id, rank]) => {
       const mine = utterances.filter((utterance) => utterance.speakerId === id);
       if (mine.length === 0) return null;
