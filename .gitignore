@@ -6,9 +6,12 @@
 *.srt
 *.vtt
 *.md
+
+# Keep documentation files in the repository
 !README.md
-!SPEC.md
 !CHANGELOG.md
+!docs/
+!openspec/
 
 # Source recordings should stay outside the repository.
 *.mp4
