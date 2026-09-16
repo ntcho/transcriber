@@ -8,6 +8,7 @@
 *.md
 !README.md
 !SPEC.md
+!CHANGELOG.md
 
 # Source recordings should stay outside the repository.
 *.mp4
