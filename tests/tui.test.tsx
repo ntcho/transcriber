@@ -128,6 +128,20 @@ describe("labeling presentation contract", () => {
     expect(auditFrame.split("\n")[0]).toBe("○  S1 Ada (00:02) · 3 utterances");
   });
 
+  it("reuses unchanged utterance derivation across audit cursor renders", () => {
+    const session = new LabelSession(paragraphFixture());
+    const first = session.utterances;
+
+    for (const cursor of [0, 1, 2]) {
+      renderLabelingFrame(session, {
+        ...createUiState(10, 100),
+        mode: { kind: "audit", speakerId: "SPEAKER_00", cursor, expanded: [] },
+      });
+    }
+
+    expect(session.utterances).toBe(first);
+  });
+
   it("keeps the status marker and line widths stable on narrow headers", () => {
     const session = new LabelSession(fixture());
     const frame = renderLabelingFrame(session, createUiState(8, 24));

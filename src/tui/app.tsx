@@ -223,9 +223,26 @@ interface AuditParagraph {
   utterances: Utterance[];
 }
 
+interface AuditParagraphCache {
+  utterances: Utterance[];
+  removeFillers: boolean;
+  bySpeaker: Map<string, AuditParagraph[]>;
+}
+
+const auditParagraphCache = new WeakMap<LabelSession, AuditParagraphCache>();
+
 /** Return output-shaped paragraphs for one speaker after live regrouping. */
 function auditParagraphs(session: LabelSession, speakerId: string): AuditParagraph[] {
-  return groupAdjacentUtterances(session.utterances)
+  const utterances = session.utterances;
+  let cache = auditParagraphCache.get(session);
+  if (!cache || cache.utterances !== utterances || cache.removeFillers !== session.removeFillers) {
+    cache = { utterances, removeFillers: session.removeFillers, bySpeaker: new Map() };
+    auditParagraphCache.set(session, cache);
+  }
+  const cached = cache.bySpeaker.get(speakerId);
+  if (cached) return cached;
+
+  const paragraphs = groupAdjacentUtterances(utterances)
     .filter((group) => group[0]!.speakerId === speakerId)
     .map((utterances) => ({
       key: utterances[0]!.key,
@@ -233,6 +250,8 @@ function auditParagraphs(session: LabelSession, speakerId: string): AuditParagra
       text: cleanFillerText(utterances.flatMap((utterance) => utterance.words).join(" "), session.removeFillers),
       utterances,
     }));
+  cache.bySpeaker.set(speakerId, paragraphs);
+  return paragraphs;
 }
 
 /** Use the pre-confirmation mode to render a quit prompt in its original view. */

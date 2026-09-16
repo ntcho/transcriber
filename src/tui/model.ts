@@ -65,6 +65,8 @@ export class LabelSession {
   private saved: LabelState;
   private history: LabelState[] = [];
   private fillersEnabled: boolean;
+  private cachedUtterances: Utterance[] | undefined;
+  private cachedSummaries: SpeakerSummary[] | undefined;
 
   /** Create a session from the labels loaded by the pipeline. */
   constructor(public readonly meeting: MeetingData) {
@@ -92,17 +94,24 @@ export class LabelSession {
   toggleFillers(): boolean {
     this.fillersEnabled = !this.fillersEnabled;
     this.meeting.removeFillers = this.fillersEnabled;
+    this.cachedSummaries = undefined;
     return this.fillersEnabled;
   }
 
   /** Current utterances after applying overrides and regrouping neighbors. */
   get utterances(): Utterance[] {
-    return buildUtterances(this.meeting.words, this.meeting.segments, this.current.overrides);
+    return this.cachedUtterances ??= buildUtterances(this.meeting.words, this.meeting.segments, this.current.overrides);
   }
 
   /** Ranked speaker cards derived from the current labels. */
   get summaries(): SpeakerSummary[] {
-    return deriveSpeakerSummaries(this.meeting.words, this.meeting.segments, this.current, this.fillersEnabled);
+    return this.cachedSummaries ??= deriveSpeakerSummaries(this.meeting.words, this.meeting.segments, this.current, this.fillersEnabled);
+  }
+
+  /** Discard data derived from labels when the authoritative state changes. */
+  private invalidateDerived(): void {
+    this.cachedUtterances = undefined;
+    this.cachedSummaries = undefined;
   }
 
   /** Apply a changed label and retain a bounded snapshot for undo. */
@@ -125,6 +134,7 @@ export class LabelSession {
     if (this.history.length > UNDO_LIMIT) this.history.shift();
     this.current = next;
     this.meeting.state = this.current;
+    this.invalidateDerived();
     return true;
   }
 
@@ -134,6 +144,7 @@ export class LabelSession {
     if (!previous) return false;
     this.current = previous;
     this.meeting.state = this.current;
+    this.invalidateDerived();
     return true;
   }
 
