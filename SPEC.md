@@ -23,7 +23,9 @@ bun transcribe.ts <recording> --no-tui # headless: apply sidecar, emit outputs (
    streamed progress. Existing JSONs → opens the TUI instantly (no re-inference).
 2. Full-screen labeling TUI (states below).
 3. `s` → emits `transcript.srt`, `transcript.vtt`, and `labels.json` inside
-   `<stem>.artifacts/`, plus `<stem>.md` next to the recording.
+   `<stem>.artifacts/`, plus `<stem>.md` next to the recording. Rendered text
+   removes contextual English fillers by default; `f` toggles this transient
+   setting before save.
 4. The zsh `transcribe()` function becomes a thin wrapper around the bun script.
 
 **Every TUI operation is a pure label transform.** ASR and diarization results
@@ -35,6 +37,7 @@ are never recomputed.
 |-----------|----------------|
 | `src/pipeline.ts` | ensure JSONs, spawn CLI, parse cached data, save outputs |
 | `src/domain.ts` | group utterances, apply label rules, render exports |
+| `src/fillers.ts` | contextual English filler detection and rendered-text cleanup |
 | `src/tui/model.ts` | semantic actions, undo history, transient UI state |
 | `src/tui/keymap.ts` | named commands and mode-scoped key bindings |
 | `src/tui/app.tsx` | OpenTUI renderer lifecycle and Solid presentation tree |
@@ -208,6 +211,7 @@ as `?` in Markdown transcript paragraphs. `q` with unsaved changes asks
 |---------|-----|--------|
 | both    | ↑/↓ | move cursor |
 | both    | u | undo |
+| both    | f | toggle contextual English filler removal |
 | both    | ctrl-c | quit (asks if unsaved) |
 | speaker | Enter | rename selected speaker |
 | speaker | m | merge selected speaker into… |
@@ -223,7 +227,9 @@ as `?` in Markdown transcript paragraphs. `q` with unsaved changes asks
 ## Output formats
 
 SRT cues per utterance, WebVTT header + cues, and Markdown transcript paragraphs
-only. Markdown merges adjacent utterances with the same speaker identity,
+only. Rendered transcript text removes contextual English fillers by default;
+the TUI toggle restores the original wording for the current save. Markdown
+merges adjacent utterances with the same speaker identity,
 uses the first utterance's timestamp, and joins their text with single spaces.
 Paragraph timestamps use zero-padded `MM:SS` through `60:00`, then
 `HH:MM:SS` after one hour. Each paragraph has the form

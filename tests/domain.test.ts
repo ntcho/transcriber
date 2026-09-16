@@ -21,7 +21,7 @@ import {
   type Utterance,
   type WordTiming,
 } from "../src/domain.ts";
-import { loadMeeting } from "../src/pipeline.ts";
+import { emitOutputs, loadMeeting, saveMeeting, type MeetingData } from "../src/pipeline.ts";
 import { commandForKey } from "../src/tui/keymap.ts";
 import { LabelSession } from "../src/tui/model.ts";
 
@@ -48,7 +48,7 @@ afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
 });
 
-function fixtureMeeting(base = `/tmp/transcriber-test-${crypto.randomUUID()}`) {
+function fixtureMeeting(base = `/tmp/transcriber-test-${crypto.randomUUID()}`): MeetingData {
   temporaryBases.push(base);
   return {
     input: "meeting.mp4",
@@ -117,6 +117,27 @@ describe("speaker label actions", () => {
     const ranks = speakerRanks(segments);
     expect(displayName("SPEAKER_00", createLabelState(), ranks)).toBe("S1");
     expect(displayName("SPEAKER_01", createLabelState(), ranks)).toBe("S2");
+  });
+
+  it("toggles filler rendering without dirtying label state", () => {
+    const meeting = fixtureMeeting();
+    meeting.words = [
+      { word: "Um,", startTime: 0, endTime: 0.2 },
+      { word: "I", startTime: 0.2, endTime: 0.4 },
+      { word: "was,", startTime: 0.4, endTime: 0.6 },
+      { word: "like,", startTime: 0.6, endTime: 0.8 },
+      { word: "ready.", startTime: 0.8, endTime: 1 },
+    ];
+    meeting.segments = [{ speakerId: "SPEAKER_00", start: 0, end: 1 }];
+    const session = new LabelSession(meeting);
+
+    expect(session.removeFillers).toBe(true);
+    expect(session.summaries[0]!.snippets[0]).toBe("I was ready.");
+    expect(session.dirty).toBe(false);
+
+    expect(session.toggleFillers()).toBe(false);
+    expect(session.summaries[0]!.snippets[0]).toBe("Um, I was, like, ready.");
+    expect(session.dirty).toBe(false);
   });
 
   it("keeps unattributed utterances visible in speaker summaries", () => {
@@ -191,9 +212,44 @@ describe("sidecar and export integration", () => {
     expect(await Bun.file(artifactPath(meeting.base, "transcript.vtt")).text()).toBe("legacy vtt");
     expect(await Bun.file(markdownPath(meeting.base)).text()).toBe("legacy markdown");
   });
+
+  it("applies the transient filler setting to exports without saving it", async () => {
+    const meeting = fixtureMeeting();
+    meeting.words = [
+      { word: "Um,", startTime: 0, endTime: 0.2 },
+      { word: "I", startTime: 0.2, endTime: 0.4 },
+      { word: "was,", startTime: 0.4, endTime: 0.6 },
+      { word: "like,", startTime: 0.6, endTime: 0.8 },
+      { word: "ready.", startTime: 0.8, endTime: 1 },
+    ];
+    meeting.segments = [{ speakerId: "SPEAKER_00", start: 0, end: 1 }];
+    meeting.removeFillers = false;
+
+    await saveMeeting(meeting);
+    expect(await Bun.file(markdownPath(meeting.base)).text()).toBe("00:00 **?:** Um, I was, like, ready.\n");
+    expect(await Bun.file(artifactPath(meeting.base, "labels.json")).text()).not.toContain("removeFillers");
+
+    meeting.removeFillers = true;
+    await emitOutputs(meeting);
+    expect(await Bun.file(markdownPath(meeting.base)).text()).toBe("00:00 **?:** I was ready.\n");
+  });
 });
 
 describe("Markdown transcript rendering", () => {
+  it("removes contextual fillers by default while preserving the opt-out", () => {
+    const utterances: Utterance[] = [{
+      key: 0,
+      start: 1,
+      end: 2,
+      speakerId: "SPEAKER_00",
+      wordEnd: 4,
+      words: ["Um,", "I", "was,", "like,", "ready."],
+    }];
+
+    expect(renderMd(utterances, () => "Ada")).toBe("00:01 **Ada:** I was ready.\n");
+    expect(renderMd(utterances, () => "Ada", false)).toBe("00:01 **Ada:** Um, I was, like, ready.\n");
+  });
+
   it("renders labeled utterances as metadata-free transcript paragraphs", () => {
     const utterances: Utterance[] = [{
       key: 0,
@@ -269,11 +325,13 @@ describe("framework-independent keymap mapping", () => {
     expect(commandForKey("speakers", "u")).toBe("label.undo");
     expect(commandForKey("speakers", "return")).toBe("speaker.rename");
     expect(commandForKey("speakers", "m")).toBe("speaker.merge");
+    expect(commandForKey("speakers", "f")).toBe("transcript.toggle-fillers");
     expect(commandForKey("speakers", "s")).toBe("file.save");
     expect(commandForKey("speakers", "q")).toBe("app.quit");
     expect(commandForKey("audit", "left")).toBe("view.back");
     expect(commandForKey("audit", "return")).toBe("audit.expand");
     expect(commandForKey("audit", "a")).toBe("audit.reassign");
+    expect(commandForKey("audit", "f")).toBe("transcript.toggle-fillers");
     expect(commandForKey("merge", "down")).toBe("cursor.down");
     expect(commandForKey("merge", "return")).toBe("picker.confirm");
     expect(commandForKey("reassign", "escape")).toBe("picker.cancel");

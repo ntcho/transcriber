@@ -17,6 +17,7 @@ export const COMMANDS = {
   merge: "speaker.merge",
   audit: "speaker.audit",
   save: "file.save",
+  toggleFillers: "transcript.toggle-fillers",
   expand: "audit.expand",
   reassign: "audit.reassign",
   back: "view.back",
@@ -50,6 +51,7 @@ export function bindingsForMode(mode: Mode["kind"]): UiBinding[] {
       { key: "return", cmd: COMMANDS.rename },
       { key: "m", cmd: COMMANDS.merge },
       { key: "s", cmd: COMMANDS.save },
+      { key: "f", cmd: COMMANDS.toggleFillers },
       { key: "q", cmd: COMMANDS.quit },
     ];
   }
@@ -62,6 +64,7 @@ export function bindingsForMode(mode: Mode["kind"]): UiBinding[] {
       { key: "left", cmd: COMMANDS.back },
       { key: "return", cmd: COMMANDS.expand },
       { key: "a", cmd: COMMANDS.reassign },
+      { key: "f", cmd: COMMANDS.toggleFillers },
       { key: "escape", cmd: COMMANDS.back },
     ];
   }

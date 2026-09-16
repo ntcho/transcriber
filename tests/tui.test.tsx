@@ -7,12 +7,13 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { rm } from "node:fs/promises";
+import { TextAttributes } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import { render } from "@opentui/solid";
 import { artifactDir, artifactPath, markdownPath } from "../src/domain.ts";
 import { LabelingApp, renderLabelingFrame } from "../src/tui/app.tsx";
-import { createUiState, LabelSession } from "../src/tui/model.ts";
+import { createUiState, LabelSession, type Mode } from "../src/tui/model.ts";
 import type { MeetingData } from "../src/pipeline.ts";
 
 const temporaryBases: string[] = [];
@@ -76,7 +77,162 @@ function paragraphFixture(): MeetingData {
   return meeting;
 }
 
+function findSpan(spans: { lines: { spans: { text: string; attributes: number }[] }[] }, needle: string) {
+  return spans.lines.flatMap((line) => line.spans).find((span) => span.text.includes(needle));
+}
+
+function findLineSpan(
+  spans: { lines: { spans: { text: string; attributes: number }[] }[] },
+  row: number,
+  needle: string,
+) {
+  return spans.lines[row]?.spans.find((span) => span.text.includes(needle));
+}
+
+describe("labeling presentation contract", () => {
+  it("renders stable status-first overview headers and summary counts", () => {
+    const session = new LabelSession(fixture());
+    const saved = renderLabelingFrame(session, createUiState(8, 100)).split("\n")[0];
+    const unsaved = renderLabelingFrame(session, { ...createUiState(8, 100), dirty: true }).split("\n")[0];
+
+    expect(saved).toBe("●  representative.mp4 (00:02) · 0/2 labeled");
+    expect(unsaved).toBe("○  representative.mp4 (00:02) · 0/2 labeled");
+
+    const orphanMeeting = fixture();
+    orphanMeeting.words = [
+      { word: "known", startTime: 0, endTime: 0.4 },
+      { word: "orphan", startTime: 4, endTime: 4.4 },
+    ];
+    orphanMeeting.segments = [{ speakerId: "SPEAKER_00", start: 0, end: 1 }];
+    orphanMeeting.state.names.set("SPEAKER_00", "Ada");
+    const orphanHeader = renderLabelingFrame(new LabelSession(orphanMeeting), createUiState(8, 100)).split("\n")[0];
+
+    expect(orphanHeader).toContain("1/2 labeled");
+    expect(orphanHeader).toContain("1 unattributed");
+  });
+
+  it("preserves long durations and the audit header's utterance count", () => {
+    const long = longFixture();
+    long.words = [{ word: "long", startTime: 3600, endTime: 7201 }];
+    long.segments = [{ speakerId: "SPEAKER_00", start: 3600, end: 7201 }];
+    const longFrame = renderLabelingFrame(new LabelSession(long), createUiState(8, 100));
+    expect(longFrame.split("\n")[0]).toContain("(02:00:01)");
+
+    const meeting = paragraphFixture();
+    meeting.state.names.set("SPEAKER_00", "Ada");
+    const auditFrame = renderLabelingFrame(new LabelSession(meeting), {
+      ...createUiState(10, 100),
+      dirty: true,
+      mode: { kind: "audit", speakerId: "SPEAKER_00", cursor: 0, expanded: [] },
+    });
+    expect(auditFrame.split("\n")[0]).toBe("○  S1 Ada (00:02) · 3 utterances");
+  });
+
+  it("keeps the status marker and line widths stable on narrow headers", () => {
+    const session = new LabelSession(fixture());
+    const frame = renderLabelingFrame(session, createUiState(8, 24));
+    const lines = frame.split("\n");
+
+    expect(lines[0]?.startsWith("●")).toBe(true);
+    expect(lines.every((line) => line.length <= 24)).toBe(true);
+    expect(lines[0]).not.toContain("[saved]");
+  });
+
+  it("assigns normal and dim intensity to the corresponding overview content", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 24 });
+    const keymap = createDefaultOpenTuiKeymap(setup.renderer);
+    const session = new LabelSession(fixture());
+    try {
+      await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
+      await setup.renderOnce();
+      const spans = setup.captureSpans();
+      const identity = findSpan(spans, "S1");
+      const metadata = findSpan(spans, "first 00:00");
+      const snippet = findSpan(spans, "thanks");
+      const savedMarker = findSpan(spans, "●");
+
+      expect(identity?.attributes ?? 0).toBe(0);
+      expect((metadata?.attributes ?? 0) & TextAttributes.DIM).toBe(TextAttributes.DIM);
+      expect((snippet?.attributes ?? 0) & TextAttributes.DIM).toBe(TextAttributes.DIM);
+      expect((savedMarker?.attributes ?? 0) & TextAttributes.DIM).toBe(TextAttributes.DIM);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("keeps audit transcript text normal while dimming inactive timestamps", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 24 });
+    const keymap = createDefaultOpenTuiKeymap(setup.renderer);
+    const session = new LabelSession(fixture());
+    try {
+      await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
+      await setup.renderOnce();
+      await setup.mockInput.pressArrow("right");
+      await setup.flush();
+      const active = setup.captureSpans();
+      expect(findLineSpan(active, 1, "00:00")?.attributes ?? 0).toBe(0);
+      expect(findLineSpan(active, 1, "thanks")?.attributes ?? 0).toBe(0);
+
+      await setup.mockInput.pressArrow("down");
+      await setup.flush();
+      const inactive = setup.captureSpans();
+      expect((findLineSpan(inactive, 1, "00:00")?.attributes ?? 0) & TextAttributes.DIM).toBe(TextAttributes.DIM);
+      expect(findLineSpan(inactive, 1, "thanks")?.attributes ?? 0).toBe(0);
+      expect(findLineSpan(inactive, 2, "followup")?.attributes ?? 0).toBe(0);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("removes footer delimiters while retaining mode-specific shortcut tokens", () => {
+    const session = new LabelSession(fixture());
+    const cases: { mode: Mode; tokens: string[] }[] = [
+      { mode: { kind: "speakers", cursor: 0 }, tokens: ["↑↓ select", "→ audit", "↵ rename", "m merge", "u undo", "f fillers on", "s save+exit", "q quit"] },
+      { mode: { kind: "rename", cursor: 0, buffer: "" }, tokens: ["type name", "↵ confirm", "esc cancel"] },
+      { mode: { kind: "merge", cursor: 0, pick: 0 }, tokens: ["↑↓ target", "↵ merge", "esc cancel"] },
+      { mode: { kind: "audit", speakerId: "SPEAKER_00", cursor: 0, expanded: [] }, tokens: ["↑↓ select", "↵ expand", "a reassign", "← back", "u undo", "f fillers on"] },
+      { mode: { kind: "reassign", speakerId: "SPEAKER_00", cursor: 0, pick: 0 }, tokens: ["↑↓ target", "↵ reassign", "esc cancel"] },
+      { mode: { kind: "confirm-quit", returnMode: { kind: "speakers", cursor: 0 } }, tokens: ["y save", "n discard", "esc cancel"] },
+    ];
+
+    for (const { mode, tokens } of cases) {
+      const lines = renderLabelingFrame(session, { ...createUiState(8, 100), mode }).split("\n");
+      const footer = lines.at(-1) ?? "";
+      expect(footer).not.toMatch(/[\[\]·]/);
+      for (const token of tokens) expect(footer).toContain(token);
+    }
+  });
+});
+
 describe("OpenTUI speaker labeling tree", () => {
+  it("toggles contextual filler text without marking labels unsaved", async () => {
+    const setup = await createTestRenderer({ width: 140, height: 20 });
+    const keymap = createDefaultOpenTuiKeymap(setup.renderer);
+    const meeting = fixture();
+    meeting.words = [
+      { word: "Um,", startTime: 0, endTime: 0.2 },
+      { word: "I", startTime: 0.2, endTime: 0.4 },
+      { word: "was,", startTime: 0.4, endTime: 0.6 },
+      { word: "like,", startTime: 0.6, endTime: 0.8 },
+      { word: "ready.", startTime: 0.8, endTime: 1 },
+    ];
+    meeting.segments = [{ speakerId: "SPEAKER_00", start: 0, end: 1 }];
+    const session = new LabelSession(meeting);
+    try {
+      await render(() => <LabelingApp session={session} keymap={keymap} finish={() => undefined} />, setup.renderer);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("I was ready.");
+      expect(session.dirty).toBe(false);
+
+      await setup.mockInput.pressKey("f");
+      await setup.flush();
+      expect(await setup.waitForFrame((frame) => frame.includes("Um, I was, like, ready."))).toContain("fillers off");
+      expect(session.dirty).toBe(false);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   it("renders ranked speaker fields in the overview", async () => {
     const setup = await createTestRenderer({ width: 100, height: 24 });
     const keymap = createDefaultOpenTuiKeymap(setup.renderer);
@@ -164,14 +320,14 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.renderOnce();
 
       expect(session.state.names.get("SPEAKER_00")).toBe("Nathan");
-      expect(setup.captureCharFrame()).toContain("[unsaved]");
+      expect(setup.captureCharFrame()).toContain("○");
 
       await setup.mockInput.pressKey("q");
       await setup.flush();
       const quitFrame = await setup.waitForFrame((current) => current.includes("save before quitting?"));
-      expect(quitFrame).toContain("[y] save");
-      expect(quitFrame).toContain("[n] discard");
-      expect(quitFrame).toContain("[esc] cancel");
+      expect(quitFrame).toContain("y save");
+      expect(quitFrame).toContain("n discard");
+      expect(quitFrame).toContain("esc cancel");
 
       await setup.mockInput.pressKey("n");
       expect(results).toEqual(["quit"]);
@@ -223,14 +379,14 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
-      await setup.waitForFrame((current) => current.includes("[unsaved]") && !current.includes("merge S1 into:"));
+      await setup.waitForFrame((current) => current.includes("○") && !current.includes("merge S1 into:"));
       expect(session.summaries).toHaveLength(1);
       expect(session.utterances.every((utterance) => utterance.speakerId === "SPEAKER_01")).toBe(true);
 
       await setup.mockInput.pressKey("u");
       await setup.flush();
       await setup.renderOnce();
-      await setup.waitForFrame((current) => current.includes("2 speakers") && !current.includes("[unsaved]"));
+      await setup.waitForFrame((current) => current.includes("0/2 labeled") && !current.includes("○"));
       expect(session.summaries).toHaveLength(2);
     } finally {
       setup.renderer.destroy();
@@ -258,7 +414,7 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.mockInput.pressEnter();
       await setup.flush();
       await setup.renderOnce();
-      await setup.waitForFrame((current) => current.includes("[unsaved]") && !current.includes("reassign to:"));
+      await setup.waitForFrame((current) => current.includes("○") && !current.includes("reassign to:"));
       expect(session.utterances.map((utterance) => utterance.speakerId)).toEqual([
         "SPEAKER_01",
         "SPEAKER_00",
@@ -268,7 +424,7 @@ describe("OpenTUI speaker labeling tree", () => {
       setup.mockInput.pressArrow("left");
       await setup.flush();
       await setup.renderOnce();
-      expect(await setup.waitForFrame((current) => current.includes("Right audit") && !current.includes("reassign to:"))).toContain("Right audit");
+      expect(await setup.waitForFrame((current) => current.includes("→ audit") && !current.includes("reassign to:"))).toContain("→ audit");
     } finally {
       setup.renderer.destroy();
     }
@@ -283,12 +439,12 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.renderOnce();
       await setup.mockInput.pressArrow("right");
       await setup.flush();
-      const collapsed = await setup.waitForFrame((frame) => frame.includes("[00:00]"));
+      const collapsed = await setup.waitForFrame((frame) => frame.includes("00:00 first"));
 
-      expect(collapsed).toContain("2 paragraphs");
-      expect(collapsed).toContain("[00:00] first paragraph");
-      expect(collapsed).not.toContain("[00:02]");
-      expect(collapsed).toContain("[00:06] last");
+      expect(collapsed).toContain("3 utterances");
+      expect(collapsed).toContain("00:00 first paragraph");
+      expect(collapsed).not.toContain("00:02 second");
+      expect(collapsed).toContain("00:06 last");
       expect(collapsed).not.toContain("second");
 
       await setup.mockInput.pressEnter();
@@ -300,14 +456,14 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.flush();
       await setup.mockInput.pressEnter();
       await setup.flush();
-      const reassigned = await setup.waitForFrame((frame) => frame.includes("[00:06] last"));
-      expect(reassigned).toContain("[00:06] last");
+      const reassigned = await setup.waitForFrame((frame) => frame.includes("00:06 last"));
+      expect(reassigned).toContain("00:06 last");
       expect(session.state.overrides).toEqual(new Map([[0, "SPEAKER_01"], [5, "SPEAKER_01"]]));
 
       await setup.mockInput.pressKey("u");
       await setup.flush();
-      const undone = await setup.waitForFrame((frame) => frame.includes("[00:00] first paragraph"));
-      expect(undone).toContain("[00:00] first paragraph");
+      const undone = await setup.waitForFrame((frame) => frame.includes("00:00 first paragraph"));
+      expect(undone).toContain("00:00 first paragraph");
       expect(session.state.overrides).toEqual(new Map());
     } finally {
       setup.renderer.destroy();
@@ -324,7 +480,7 @@ describe("OpenTUI speaker labeling tree", () => {
       setup.mockInput.pressArrow("right");
       await setup.flush();
       await setup.renderOnce();
-      const collapsed = await setup.waitForFrame((frame) => frame.includes("[00:00]"));
+      const collapsed = await setup.waitForFrame((frame) => frame.includes("00:00"));
       expect(collapsed).not.toContain("nine ten");
 
       setup.mockInput.pressEnter();
@@ -348,7 +504,7 @@ describe("OpenTUI speaker labeling tree", () => {
       await setup.renderOnce();
       const frame = await setup.waitForFrame((current) => current.split("\n").every((line) => line.length <= 40));
       expect(frame).toContain("representative.mp4");
-      expect(frame).toContain("[saved]");
+      expect(frame).toContain("●");
     } finally {
       setup.renderer.destroy();
     }
@@ -379,7 +535,7 @@ describe("OpenTUI speaker labeling tree", () => {
       const lines = (await setup.waitForFrame((frame) => frame.includes("rename S1"))).trimEnd().split("\n");
 
       expect(lines).toHaveLength(10);
-      expect(lines.at(-1)).toContain("[↵]");
+      expect(lines.at(-1)).toContain("↵ confirm");
       expect(lines.at(-2)).toContain("─");
     } finally {
       setup.renderer.destroy();
@@ -464,7 +620,7 @@ describe("OpenTUI speaker labeling tree", () => {
       await editedSetup.flush();
       await editedSetup.renderOnce();
       expect(editedSession.dirty).toBe(true);
-      await editedSetup.waitForFrame((frame) => frame.includes("[unsaved]") && !frame.includes("rename S1"));
+      await editedSetup.waitForFrame((frame) => frame.includes("○") && !frame.includes("rename S1"));
       editedSetup.mockInput.pressCtrlC();
       await editedSetup.flush();
       await editedSetup.renderOnce();

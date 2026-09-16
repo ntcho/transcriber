@@ -46,10 +46,12 @@ bun transcribe.ts meeting.mp4
 
 1. Missing `<stem>.artifacts/asr.json` / `diar.json` → runs the FluidAudio CLI with concise progress output
 2. Opens the OpenTUI/Solid speaker-labeling workflow (SPEC.md): rename
-   speakers, merge split speakers, reassign individual utterances, undo
+   speakers, merge split speakers, reassign individual utterances, undo, and
+   toggle contextual English filler removal (`f`, enabled by default)
 3. `s` writes `transcript.srt`, `transcript.vtt`, and `labels.json` inside
    `<stem>.artifacts/`, while the Markdown export stays beside the recording
-   as `<stem>.md`
+   as `<stem>.md`. Transcript text removes contextual English fillers by
+   default; the TUI `f` toggle can restore the verbatim wording before save.
 
 Reopening a recording with cached JSONs is instant (labels replay from the
 sidecar — inference never re-runs). `--no-tui` skips the TUI for headless/agent use.

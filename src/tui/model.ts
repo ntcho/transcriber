@@ -64,11 +64,13 @@ export class LabelSession {
   private current: LabelState;
   private saved: LabelState;
   private history: LabelState[] = [];
+  private fillersEnabled: boolean;
 
   /** Create a session from the labels loaded by the pipeline. */
   constructor(public readonly meeting: MeetingData) {
     this.current = meeting.state;
     this.saved = cloneState(meeting.state);
+    this.fillersEnabled = meeting.removeFillers ?? true;
   }
 
   /** Current authoritative labels. */
@@ -81,6 +83,18 @@ export class LabelSession {
     return !labelStatesEqual(this.current, this.saved);
   }
 
+  /** Whether rendered transcript text currently omits contextual fillers. */
+  get removeFillers(): boolean {
+    return this.fillersEnabled;
+  }
+
+  /** Toggle rendered filler removal without changing labels or undo history. */
+  toggleFillers(): boolean {
+    this.fillersEnabled = !this.fillersEnabled;
+    this.meeting.removeFillers = this.fillersEnabled;
+    return this.fillersEnabled;
+  }
+
   /** Current utterances after applying overrides and regrouping neighbors. */
   get utterances(): Utterance[] {
     return buildUtterances(this.meeting.words, this.meeting.segments, this.current.overrides);
@@ -88,7 +102,7 @@ export class LabelSession {
 
   /** Ranked speaker cards derived from the current labels. */
   get summaries(): SpeakerSummary[] {
-    return deriveSpeakerSummaries(this.meeting.words, this.meeting.segments, this.current);
+    return deriveSpeakerSummaries(this.meeting.words, this.meeting.segments, this.current, this.fillersEnabled);
   }
 
   /** Apply a changed label and retain a bounded snapshot for undo. */
@@ -126,6 +140,7 @@ export class LabelSession {
   /** Persist all outputs and establish the current state as the save baseline. */
   async save(): Promise<void> {
     this.meeting.state = this.current;
+    this.meeting.removeFillers = this.fillersEnabled;
     await saveMeeting(this.meeting);
     this.saved = cloneState(this.current);
     this.history = [];

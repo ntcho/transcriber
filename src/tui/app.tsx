@@ -6,12 +6,22 @@
  * between overview, audit, picker, and prompt modes.
  */
 
-import { createCliRenderer, type InputRenderable, type KeyEvent, type Renderable, type TextRenderable } from "@opentui/core";
+import {
+  createCliRenderer,
+  StyledText,
+  TextAttributes,
+  type InputRenderable,
+  type KeyEvent,
+  type Renderable,
+  type TextChunk,
+  type TextRenderable,
+} from "@opentui/core";
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
 import type { Keymap } from "@opentui/keymap";
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js/dist/solid.js";
 import type { JSX } from "solid-js";
 import { onResize, render, useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { cleanFillerText } from "../fillers.ts";
 import {
   fmtShort,
   groupAdjacentUtterances,
@@ -46,9 +56,64 @@ const SYMBOLS = {
   enter: "↵",
   escape: "esc",
   warning: "⚠",
-  saved: "✓",
-  unsaved: "●",
+  saved: "●",
+  unsaved: "○",
 } as const;
+
+/** Intensity is the only styling dimension used to communicate hierarchy. */
+export type PresentationIntensity = "normal" | "dim";
+
+/** One width-measured piece of visible text before it becomes terminal styling. */
+export interface PresentationSegment {
+  text: string;
+  intensity: PresentationIntensity;
+}
+
+type PresentationLine = PresentationSegment[];
+
+function normalText(text: string): PresentationSegment {
+  return { text, intensity: "normal" };
+}
+
+function dimText(text: string): PresentationSegment {
+  return { text, intensity: "dim" };
+}
+
+/** Join adjacent segments so plain and styled renderings share the same rows. */
+function line(...parts: PresentationSegment[]): PresentationLine {
+  const result: PresentationLine = [];
+  for (const part of parts) {
+    if (!part.text) continue;
+    const previous = result.at(-1);
+    if (previous?.intensity === part.intensity) previous.text += part.text;
+    else result.push({ ...part });
+  }
+  return result;
+}
+
+function lineText(parts: PresentationLine): string {
+  return parts.map((part) => part.text).join("");
+}
+
+function lineWidth(parts: PresentationLine): number {
+  return parts.reduce((width, part) => width + part.text.length, 0);
+}
+
+/** Convert already-laid-out segments into OpenTUI chunks without ANSI escapes. */
+function toStyledText(lines: PresentationLine[]): StyledText {
+  const chunks: TextChunk[] = [];
+  lines.forEach((parts, index) => {
+    for (const part of parts) {
+      chunks.push({
+        __isChunk: true,
+        text: part.text,
+        attributes: part.intensity === "dim" ? TextAttributes.DIM : TextAttributes.NONE,
+      });
+    }
+    if (index < lines.length - 1) chunks.push({ __isChunk: true, text: "\n", attributes: TextAttributes.NONE });
+  });
+  return new StyledText(chunks);
+}
 
 /** Result returned after the renderer has restored the terminal. */
 export type TuiResult = "saved" | "quit";
@@ -64,6 +129,22 @@ export interface LabelingAppProps {
 function truncate(text: string, width: number): string {
   if (width <= 0) return "";
   return text.length <= width ? text : text.slice(0, Math.max(0, width - 1)) + "…";
+}
+
+/** Truncate a fully assembled row while preserving each segment's intensity. */
+function fitLine(parts: PresentationLine, width: number): PresentationLine {
+  const limit = Math.max(1, width);
+  if (lineWidth(parts) <= limit) return parts;
+  const target = truncate(lineText(parts), limit);
+  let remaining = target.length;
+  const fitted: PresentationSegment[] = [];
+  for (const part of parts) {
+    if (remaining <= 0) break;
+    const text = part.text.slice(0, remaining);
+    if (text) fitted.push({ text, intensity: part.intensity });
+    remaining -= text.length;
+  }
+  return line(...fitted);
 }
 
 /** Wrap prose into rows no wider than the current terminal content area. */
@@ -93,6 +174,17 @@ function wrapText(text: string, width: number): string[] {
   }
   if (line) lines.push(line);
   return lines.length ? lines : [""];
+}
+
+/** Keep compact UI durations while retaining hours when the recording needs them. */
+function formatDuration(seconds: number): string {
+  if (seconds < 3_600) return fmtShort(seconds);
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const remainder = totalSeconds % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(remainder)}`;
 }
 
 /** Render the proportional talk-time bar without ANSI escape sequences. */
@@ -138,7 +230,7 @@ function auditParagraphs(session: LabelSession, speakerId: string): AuditParagra
     .map((utterances) => ({
       key: utterances[0]!.key,
       start: utterances[0]!.start,
-      text: utterances.flatMap((utterance) => utterance.words).join(" "),
+      text: cleanFillerText(utterances.flatMap((utterance) => utterance.words).join(" "), session.removeFillers),
       utterances,
     }));
 }
@@ -149,12 +241,12 @@ function returnMode(mode: Mode): BaseMode {
 }
 
 /** Build the speaker overview body from domain-derived summaries. */
-function speakerBody(session: LabelSession, ui: UiState, height: number): string {
+function speakerBody(session: LabelSession, ui: UiState, height: number): PresentationLine[] {
   const mode = returnMode(ui.mode);
   const summaries = session.summaries;
   const cols = ui.cols;
-  const columns = speakerColumns(cols);
-  const body: string[] = [];
+  const columns = speakerColumns(Math.max(1, cols));
+  const body: PresentationLine[] = [];
   let cursorRow = 0;
   summaries.forEach((summary, index) => {
     const name = speakerName(summary.id, summary.assignedName);
@@ -162,99 +254,189 @@ function speakerBody(session: LabelSession, ui: UiState, height: number): string
       cursorRow = body.length;
     }
     const cursor = (mode.kind === "speakers" || mode.kind === "rename" || mode.kind === "merge") && index === mode.cursor ? SYMBOLS.cursor : " ";
-    body.push(` ${cursor} ${speakerTag(summary.id, summary.rank)}  ${truncate(name, columns.name).padEnd(columns.name)} ${talkBar(summary.share, columns.bar)}  ${fmtShort(summary.talkSeconds)} (${Math.round(summary.share * 100)}%)`);
-    body.push(`     ${summary.utteranceCount} ${summary.utteranceCount === 1 ? "utt" : "utts"} | first ${fmtShort(summary.firstStart)} | last ${fmtShort(summary.lastEnd)}`);
-    body.push(`     ${truncate(`"${summary.snippets[0] ?? ""}"`, Math.max(1, cols - 7))}`);
-    if (summary.snippets[1]) body.push(`     ${truncate(`"${summary.snippets[1]}"`, Math.max(1, cols - 7))}`);
+    body.push(fitLine(
+      line(
+        normalText(` ${cursor} ${speakerTag(summary.id, summary.rank)}  ${truncate(name, columns.name).padEnd(columns.name)}`),
+        dimText(` ${talkBar(summary.share, columns.bar)}  ${formatDuration(summary.talkSeconds)} (${Math.round(summary.share * 100)}%)`),
+      ),
+      cols,
+    ));
+    body.push(fitLine(line(dimText(`     ${summary.utteranceCount} ${summary.utteranceCount === 1 ? "utt" : "utts"} | first ${formatDuration(summary.firstStart)} | last ${formatDuration(summary.lastEnd)}`)), cols));
+    body.push(fitLine(line(dimText(`     ${truncate(`"${summary.snippets[0] ?? ""}"`, Math.max(1, cols - 7))}`)), cols));
+    if (summary.snippets[1]) body.push(fitLine(line(dimText(`     ${truncate(`"${summary.snippets[1]}"`, Math.max(1, cols - 7))}`)), cols));
     if (mode.kind === "rename" && mode.cursor === index) {
-      body.push(`     rename ${speakerTag(summary.id, summary.rank)} ${SYMBOLS.arrowRight} ${mode.buffer}${SYMBOLS.cursor}`);
+      body.push(fitLine(line(normalText(`     rename ${speakerTag(summary.id, summary.rank)} ${SYMBOLS.arrowRight} ${mode.buffer}${SYMBOLS.cursor}`)), cols));
     } else if (mode.kind === "merge" && mode.cursor === index) {
-      body.push(`     merge ${speakerTag(summary.id, summary.rank)} into:`);
+      body.push(fitLine(line(dimText(`     merge ${speakerTag(summary.id, summary.rank)} into:`)), cols));
       summaries.filter((target) => target.id !== summary.id).forEach((target, pick) => {
-        body.push(`     ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} ${speakerTag(target.id, target.rank)}  ${speakerName(target.id, target.assignedName)}`);
+        body.push(fitLine(line(normalText(`     ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} ${speakerTag(target.id, target.rank)}  ${speakerName(target.id, target.assignedName)}`)), cols));
       });
     }
-    body.push("");
+    body.push([]);
   });
-  if (ui.mode.kind === "confirm-quit") body.push(`${SYMBOLS.warning} save before quitting?`);
+  if (ui.mode.kind === "confirm-quit") body.push(line(normalText(`${SYMBOLS.warning} save before quitting?`)));
   const offset = scrollOffset(cursorRow, height, body.length);
-  return body.slice(offset, offset + height).join("\n");
+  return body.slice(offset, offset + height);
 }
 
 /** Build the audit body with one row per paragraph and expanded wrapping. */
-function auditBody(session: LabelSession, ui: UiState, height: number): string {
+function auditBody(session: LabelSession, ui: UiState, height: number): PresentationLine[] {
   const mode = returnMode(ui.mode);
-  if (mode.kind !== "audit" && mode.kind !== "reassign") return "";
+  if (mode.kind !== "audit" && mode.kind !== "reassign") return [];
   const paragraphs = auditParagraphs(session, mode.speakerId);
   const ranks = speakerRanks(session.meeting.segments);
   const ids = currentSpeakerIds(session);
   const cols = ui.cols;
-  const textWidth = Math.max(1, cols - 12);
-  const body: string[] = [];
+  const body: PresentationLine[] = [];
   let cursorRow = 0;
   paragraphs.forEach((paragraph, index) => {
     if (index === mode.cursor) cursorRow = body.length;
     const cursor = index === mode.cursor ? SYMBOLS.cursor : " ";
     const expanded = mode.kind === "audit" && mode.expanded.includes(paragraph.key);
+    const timestamp = formatDuration(paragraph.start);
+    const prefix = ` ${cursor} ${timestamp} `;
+    const textWidth = Math.max(1, cols - prefix.length);
     const lines = expanded ? wrapText(paragraph.text, textWidth) : [truncate(paragraph.text, textWidth)];
-    body.push(` ${cursor} [${fmtShort(paragraph.start)}] ${lines[0]}`);
-    lines.slice(1).forEach((line) => body.push(`          ${line}`));
+    body.push(fitLine(
+      line(
+        normalText(` ${cursor} `),
+        index === mode.cursor ? normalText(timestamp) : dimText(timestamp),
+        normalText(` ${lines[0]}`),
+      ),
+      cols,
+    ));
+    lines.slice(1).forEach((text) => body.push(fitLine(line(normalText(`${" ".repeat(prefix.length)}${text}`)), cols)));
     if (mode.kind === "reassign" && index === mode.cursor) {
-      body.push("   reassign to:");
+      body.push(fitLine(line(dimText("   reassign to:")), cols));
       ids.filter((id) => id !== mode.speakerId).forEach((id, pick) => {
-        body.push(`   ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} ${speakerTag(id, ranks.get(id))}  ${speakerName(id, session.state.names.get(id))}`);
+        body.push(fitLine(line(normalText(`   ${pick === mode.pick ? SYMBOLS.cursor : SYMBOLS.empty} ${speakerTag(id, ranks.get(id))}  ${speakerName(id, session.state.names.get(id))}`)), cols));
       });
     }
   });
-  if (ui.mode.kind === "confirm-quit") body.push(`${SYMBOLS.warning} save before quitting?`);
+  if (ui.mode.kind === "confirm-quit") body.push(line(normalText(`${SYMBOLS.warning} save before quitting?`)));
   const offset = scrollOffset(cursorRow, height, body.length);
-  return body.slice(offset, offset + height).join("\n");
+  return body.slice(offset, offset + height);
 }
 
-/** Return the visible header for the current screen. */
-function headerText(session: LabelSession, ui: UiState): string {
+/** Fit the header fields while protecting the leading status marker. */
+function fitHeader(
+  marker: PresentationSegment,
+  identity: string,
+  duration: string,
+  summary: PresentationSegment,
+  width: number,
+): PresentationLine {
+  const cols = Math.max(1, width);
+  if (cols === 1) return line(marker);
+
+  const spacing = " ".repeat(Math.min(2, cols - 1));
+  let available = cols - 1 - spacing.length;
+  const result: PresentationSegment[] = [marker, normalText(spacing)];
+  const durationSegment = dimText(` (${duration})`);
+  const canKeepDuration = available >= durationSegment.text.length + 1;
+  const identityWidth = canKeepDuration ? available - durationSegment.text.length : available;
+  const identitySegment = fitLine(line(normalText(identity)), identityWidth);
+  result.push(...identitySegment);
+  available -= lineWidth(identitySegment);
+  if (canKeepDuration && available >= durationSegment.text.length) {
+    result.push(durationSegment);
+    available -= durationSegment.text.length;
+  }
+  if (available > 0) result.push(...fitLine(line(summary), available));
+  return line(...result);
+}
+
+/** Return the visible status-first header for the current screen. */
+function headerLine(session: LabelSession, ui: UiState): PresentationLine {
   const mode = returnMode(ui.mode);
-  const state = ui.dirty ? `${SYMBOLS.unsaved} [unsaved]` : `${SYMBOLS.saved} [saved]`;
+  const marker = ui.dirty ? normalText(SYMBOLS.unsaved) : dimText(SYMBOLS.saved);
   if (mode.kind === "audit" || mode.kind === "reassign") {
     const paragraphs = auditParagraphs(session, mode.speakerId);
     const ranks = speakerRanks(session.meeting.segments);
     const name = speakerName(mode.speakerId, session.state.names.get(mode.speakerId));
+    const utteranceCount = paragraphs.reduce((count, paragraph) => count + paragraph.utterances.length, 0);
     const talk = paragraphs.flatMap(({ utterances }) => utterances).reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
-    return truncate(`${state} · ${speakerTag(mode.speakerId, ranks.get(mode.speakerId))} ${name} · ${paragraphs.length} ${paragraphs.length === 1 ? "paragraph" : "paragraphs"} · ${fmtShort(talk)} talk`, Math.max(1, ui.cols));
+    return fitHeader(
+      marker,
+      `${speakerTag(mode.speakerId, ranks.get(mode.speakerId))} ${name}`,
+      formatDuration(talk),
+      dimText(` · ${utteranceCount} ${utteranceCount === 1 ? "utterance" : "utterances"}`),
+      ui.cols,
+    );
   }
+
   const end = session.utterances.at(-1)?.end ?? 0;
   const summaries = session.summaries;
-  const realSpeakers = summaries.filter((summary) => summary.id !== "?");
-  const unattributed = summaries.find((summary) => summary.id === "?");
-  const unlabeled = realSpeakers.filter((summary) => summary.assignedName === "?").length;
-  const speakerCount = realSpeakers.length;
-  const unattributedHint = unattributed ? ` · ${unattributed.utteranceCount} unattributed` : "";
-  return truncate(`${state} · ${session.meeting.sourceName} · ${fmtShort(end)} · ${speakerCount} ${speakerCount === 1 ? "speaker" : "speakers"}${unattributedHint} · unlabeled ${unlabeled}`, Math.max(1, ui.cols));
+  const labeled = summaries.filter((summary) => summary.assignedName !== "?").length;
+  const unattributed = summaries.find((summary) => summary.id === "?")?.utteranceCount ?? 0;
+  const suffix = unattributed > 0 ? ` · ${unattributed} unattributed` : "";
+  return fitHeader(
+    marker,
+    session.meeting.sourceName,
+    formatDuration(end),
+    dimText(` · ${labeled}/${summaries.length} labeled${suffix}`),
+    ui.cols,
+  );
+}
+
+function shortcut(key: string, description: string): PresentationLine {
+  return line(normalText(key), dimText(` ${description}`));
+}
+
+function footerGroups(groups: PresentationLine[]): PresentationLine {
+  const parts: PresentationSegment[] = [];
+  groups.forEach((group, index) => {
+    if (index > 0) parts.push(normalText(" "));
+    parts.push(...group);
+  });
+  return line(...parts);
 }
 
 /** Return the footer key hints and current status for the active mode. */
-function footerText(ui: UiState): string {
+function footerLine(session: LabelSession, ui: UiState): PresentationLine {
   const mode = returnMode(ui.mode);
-  let footer: string;
+  let footer: PresentationLine;
   if (ui.mode.kind === "confirm-quit") {
-    footer = `${SYMBOLS.warning} save before quitting? [y] save · [n] discard · [${SYMBOLS.escape}] cancel`;
+    footer = footerGroups([
+      line(normalText(`${SYMBOLS.warning} save before quitting?`)),
+      shortcut("y", "save"),
+      shortcut("n", "discard"),
+      shortcut(SYMBOLS.escape, "cancel"),
+    ]);
   } else if (mode.kind === "rename") {
-    footer = `type name · [${SYMBOLS.enter}] confirm · [${SYMBOLS.escape}] cancel`;
+    footer = footerGroups([line(dimText("type name")), shortcut(SYMBOLS.enter, "confirm"), shortcut(SYMBOLS.escape, "cancel")]);
   } else if (mode.kind === "merge") {
-    footer = `[${SYMBOLS.upDown}] target · [${SYMBOLS.enter}] merge · [${SYMBOLS.escape}] cancel`;
+    footer = footerGroups([shortcut(SYMBOLS.upDown, "target"), shortcut(SYMBOLS.enter, "merge"), shortcut(SYMBOLS.escape, "cancel")]);
   } else if (mode.kind === "reassign") {
-    footer = `[${SYMBOLS.upDown}] target · [${SYMBOLS.enter}] reassign · [${SYMBOLS.escape}] cancel`;
+    footer = footerGroups([shortcut(SYMBOLS.upDown, "target"), shortcut(SYMBOLS.enter, "reassign"), shortcut(SYMBOLS.escape, "cancel")]);
   } else if (mode.kind === "audit") {
-    footer = `[${SYMBOLS.upDown}] select · [${SYMBOLS.enter}] expand · [a] reassign · [${SYMBOLS.arrowLeft}] back · [u] undo`;
+    footer = footerGroups([
+      shortcut(SYMBOLS.upDown, "select"),
+      shortcut(SYMBOLS.enter, "expand"),
+      shortcut("a", "reassign"),
+      shortcut(SYMBOLS.arrowLeft, "back"),
+      shortcut("u", "undo"),
+      shortcut("f", `fillers ${session.removeFillers ? "on" : "off"}`),
+    ]);
   } else {
-    footer = `[${SYMBOLS.upDown}] select · [${SYMBOLS.arrowRight}] Right audit · [${SYMBOLS.enter}] rename · [m] merge · [u] undo · [s] save+exit · [q] quit`;
+    footer = footerGroups([
+      shortcut(SYMBOLS.upDown, "select"),
+      shortcut(SYMBOLS.arrowRight, "audit"),
+      shortcut(SYMBOLS.enter, "rename"),
+      shortcut("m", "merge"),
+      shortcut("u", "undo"),
+      shortcut("f", `fillers ${session.removeFillers ? "on" : "off"}`),
+      shortcut("s", "save+exit"),
+      shortcut("q", "quit"),
+    ]);
   }
-  return truncate(`${footer}${ui.status ? ` · ${ui.status}` : ""}`, Math.max(1, ui.cols));
+  if (ui.status) footer = footerGroups([footer, line(dimText(ui.status))]);
+  return fitLine(footer, ui.cols);
 }
 
 /** Render the fixed two-row footer, including its width-aware divider. */
-function footerFrameText(ui: UiState): string {
-  return `${"─".repeat(Math.max(1, ui.cols))}\n${footerText(ui)}`;
+function footerLines(session: LabelSession, ui: UiState): PresentationLine[] {
+  return [line(dimText("─".repeat(Math.max(1, ui.cols)))), footerLine(session, ui)];
 }
 
 /** Return the body viewport size after reserving fixed rows. */
@@ -264,26 +446,43 @@ function bodyRows(ui: UiState): number {
 }
 
 /** Build the current body viewport without the fixed header or footer. */
-function bodyText(session: LabelSession, ui: UiState): string {
+function bodyLines(session: LabelSession, ui: UiState): PresentationLine[] {
   const mode = returnMode(ui.mode);
   return mode.kind === "audit" || mode.kind === "reassign"
     ? auditBody(session, ui, bodyRows(ui))
     : speakerBody(session, ui, bodyRows(ui));
 }
 
+interface LabelingPresentation {
+  header: PresentationLine;
+  body: PresentationLine[];
+  footer: PresentationLine[];
+}
+
+/** Build all visible regions from one shared, already-laid-out presentation. */
+function labelingPresentation(session: LabelSession, ui: UiState): LabelingPresentation {
+  const normalized = { ...ui, rows: Math.max(1, ui.rows), cols: Math.max(1, ui.cols) };
+  return {
+    header: headerLine(session, normalized),
+    body: bodyLines(session, normalized),
+    footer: footerLines(session, normalized),
+  };
+}
+
 /** Render a complete frame with the footer guaranteed to be the final row. */
 export function renderLabelingFrame(session: LabelSession, ui: UiState): string {
   const cols = Math.max(1, ui.cols);
   const rows = Math.max(1, ui.rows);
+  const presentation = labelingPresentation(session, ui);
   const contentRows = Math.max(0, rows - FOOTER_ROWS);
-  const lines = [headerText(session, ui), ...bodyText(session, ui).split("\n")];
-  if (ui.mode.kind === "rename") lines.push(`     ${ui.mode.buffer}${SYMBOLS.cursor}`);
-  const visible = lines.slice(0, contentRows);
-  while (visible.length < contentRows) visible.push("");
-  const footer = footerFrameText(ui).split("\n");
-  if (rows === 1) return truncate(footerText(ui), cols);
-  if (rows === 2) return footer.map((line) => truncate(line, cols)).join("\n");
-  return [...visible, ...footer].map((line) => truncate(line, cols)).join("\n");
+  const lines = [presentation.header, ...presentation.body];
+  if (ui.mode.kind === "rename") lines.push(line(normalText(`     ${ui.mode.buffer}${SYMBOLS.cursor}`)));
+  const visible = lines.slice(0, contentRows).map((parts) => fitLine(parts, cols));
+  while (visible.length < contentRows) visible.push([]);
+  const footer = presentation.footer.map((parts) => lineText(parts));
+  if (rows === 1) return footer[1] ?? "";
+  if (rows === 2) return footer.join("\n");
+  return [...visible.map(lineText), ...footer].join("\n");
 }
 
 /** Root Solid component that owns transient state and semantic command handlers. */
@@ -321,6 +520,11 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
     await props.session.save();
     touch("saved");
     props.finish("saved");
+  };
+
+  const toggleFillers = () => {
+    const enabled = props.session.toggleFillers();
+    touch(`fillers ${enabled ? "on" : "off"}`);
   };
 
   const move = (delta: number) => {
@@ -427,9 +631,10 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
 
   const updateFrame = () => {
     const current = ui();
-    if (headerRenderable) headerRenderable.content = headerText(props.session, current);
-    if (bodyRenderable) bodyRenderable.content = bodyText(props.session, current);
-    if (footerRenderable) footerRenderable.content = footerFrameText(current);
+    const presentation = labelingPresentation(props.session, current);
+    if (headerRenderable) headerRenderable.content = toStyledText([presentation.header]);
+    if (bodyRenderable) bodyRenderable.content = toStyledText(presentation.body);
+    if (footerRenderable) footerRenderable.content = toStyledText(presentation.footer);
   };
 
   onResize((width, height) => {
@@ -457,6 +662,7 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
         { name: COMMANDS.merge, run: merge },
         { name: COMMANDS.audit, run: audit },
         { name: COMMANDS.save, run: save },
+        { name: COMMANDS.toggleFillers, run: toggleFillers },
         { name: COMMANDS.expand, run: expand },
         { name: COMMANDS.reassign, run: startReassign },
         { name: COMMANDS.back, run: cancel },
@@ -508,18 +714,17 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
       <text
         ref={(element) => {
           headerRenderable = element;
-          headerRenderable.content = headerText(props.session, ui());
+          headerRenderable.content = toStyledText([labelingPresentation(props.session, ui()).header]);
         }}
         width="100%"
         height={HEADER_ROWS}
         flexShrink={0}
         wrapMode="none"
-        content={headerText(props.session, ui())}
       />
       <text
         ref={(element) => {
           bodyRenderable = element;
-          bodyRenderable.content = bodyText(props.session, ui());
+          bodyRenderable.content = toStyledText(labelingPresentation(props.session, ui()).body);
         }}
         width="100%"
         minHeight={1}
@@ -527,7 +732,6 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
         flexShrink={1}
         overflow="hidden"
         wrapMode="none"
-        content={bodyText(props.session, ui())}
       />
       <input
         ref={(element) => {
@@ -544,13 +748,12 @@ export function LabelingApp(props: LabelingAppProps): JSX.Element {
       <text
         ref={(element) => {
           footerRenderable = element;
-          footerRenderable.content = footerFrameText(ui());
+          footerRenderable.content = toStyledText(labelingPresentation(props.session, ui()).footer);
         }}
         width="100%"
         height={FOOTER_ROWS}
         flexShrink={0}
         wrapMode="none"
-        content={footerFrameText(ui())}
       />
     </box>
   );
