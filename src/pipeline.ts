@@ -34,6 +34,8 @@ export interface MeetingData {
   words: WordTiming[];
   segments: Segment[];
   state: LabelState;
+  /** Transient export setting; it is not persisted in the labels sidecar. */
+  removeFillers?: boolean;
 }
 
 interface ProcessHandle {
@@ -116,11 +118,12 @@ export async function emitOutputs(meeting: MeetingData): Promise<void> {
   const ranks = speakerRanks(meeting.segments);
   const label = (id: string) => displayName(id, meeting.state, ranks);
   const markdownLabel = (id: string) => meeting.state.names.get(id) || "?";
+  const removeFillers = meeting.removeFillers ?? true;
   await mkdir(artifactDir(meeting.base), { recursive: true });
   await Promise.all([
-    Bun.write(artifactPath(meeting.base, "transcript.srt"), renderSrt(utterances, label)),
-    Bun.write(artifactPath(meeting.base, "transcript.vtt"), renderVtt(utterances, label)),
-    Bun.write(markdownPath(meeting.base), renderMd(utterances, markdownLabel)),
+    Bun.write(artifactPath(meeting.base, "transcript.srt"), renderSrt(utterances, label, removeFillers)),
+    Bun.write(artifactPath(meeting.base, "transcript.vtt"), renderVtt(utterances, label, removeFillers)),
+    Bun.write(markdownPath(meeting.base), renderMd(utterances, markdownLabel, removeFillers)),
   ]);
 }
 

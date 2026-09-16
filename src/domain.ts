@@ -7,6 +7,7 @@
  */
 
 import { mkdir, rename } from "node:fs/promises";
+import { cleanFillerText } from "./fillers.ts";
 
 const GAP_SPLIT_SECONDS = 1.0;
 const ORPHAN_ASSIGN_CAP = 2.0;
@@ -191,21 +192,21 @@ export function fmtShort(seconds: number): string {
 }
 
 /** Render the current utterances in the existing SRT format. */
-export function renderSrt(utterances: Utterance[], label: (id: string) => string): string {
+export function renderSrt(utterances: Utterance[], label: (id: string) => string, removeFillers = true): string {
   const cues = utterances.map((utterance, index) => {
     return `${index + 1}\n${fmtClock(utterance.start, true)} --> ${fmtClock(utterance.end, true)}\n` +
-      `${label(utterance.speakerId)}: ${utterance.words.join(" ")}`;
+      `${label(utterance.speakerId)}: ${cleanFillerText(utterance.words.join(" "), removeFillers)}`;
   });
   return cues.join("\n\n") + "\n";
 }
 
 /** Render the current utterances in the existing WebVTT format. */
-export function renderVtt(utterances: Utterance[], label: (id: string) => string): string {
+export function renderVtt(utterances: Utterance[], label: (id: string) => string, removeFillers = true): string {
   const cues = ["WEBVTT"];
   for (const utterance of utterances) {
     cues.push(
       `${fmtClock(utterance.start)} --> ${fmtClock(utterance.end)}\n` +
-        `${label(utterance.speakerId)}: ${utterance.words.join(" ")}`,
+        `${label(utterance.speakerId)}: ${cleanFillerText(utterance.words.join(" "), removeFillers)}`,
     );
   }
   return cues.join("\n\n") + "\n";
@@ -233,13 +234,13 @@ function fmtMarkdownTimestamp(seconds: number, useHours: boolean): string {
 }
 
 /** Render the current utterances as Markdown transcript paragraphs. */
-export function renderMd(utterances: Utterance[], label: (id: string) => string): string {
+export function renderMd(utterances: Utterance[], label: (id: string) => string, removeFillers = true): string {
   const lastEnd = utterances[utterances.length - 1]?.end ?? 0;
   const useHours = lastEnd > 3_600;
   const groups = groupAdjacentUtterances(utterances);
   const paragraphs = groups.map((group) => {
     const first = group[0]!;
-    const words = group.flatMap((utterance) => utterance.words).join(" ");
+    const words = cleanFillerText(group.flatMap((utterance) => utterance.words).join(" "), removeFillers);
     return `${fmtMarkdownTimestamp(first.start, useHours)} **${label(first.speakerId)}:** ${words}`;
   });
   return paragraphs.length > 0 ? paragraphs.join("\n\n") + "\n" : "";
@@ -250,6 +251,7 @@ export function deriveSpeakerSummaries(
   words: WordTiming[],
   segments: Segment[],
   state: LabelState,
+  removeFillers = true,
 ): SpeakerSummary[] {
   const utterances = buildUtterances(words, segments, state.overrides);
   const ranks = speakerRanks(segments);
@@ -261,13 +263,13 @@ export function deriveSpeakerSummaries(
       const mine = utterances.filter((utterance) => utterance.speakerId === id);
       if (mine.length === 0) return null;
       const talkSeconds = mine.reduce((sum, utterance) => sum + utterance.end - utterance.start, 0);
-      const firstSnippet = mine[0]!.words.join(" ");
+      const firstSnippet = cleanFillerText(mine[0]!.words.join(" "), removeFillers);
       const longest = mine.reduce((current, utterance) =>
         utterance.words.length > current.words.length ? utterance : current,
       );
       const snippets = [firstSnippet];
-      if (mine.length > 1 && longest.key !== mine[0]!.key) snippets.push(longest.words.join(" "));
-      else if (mine.length > 1) snippets.push(mine[1]!.words.join(" "));
+      if (mine.length > 1 && longest.key !== mine[0]!.key) snippets.push(cleanFillerText(longest.words.join(" "), removeFillers));
+      else if (mine.length > 1) snippets.push(cleanFillerText(mine[1]!.words.join(" "), removeFillers));
       return {
         id,
         rank,
