@@ -19,7 +19,7 @@ diarization. Inference runs on-device after the required models are downloaded.
 - `src/tui/keymap.ts` — named OpenTUI commands and mode-scoped bindings.
 - `src/tui/app.tsx` — OpenTUI renderer lifecycle and SolidJS presentation tree.
 - `tests/` — Bun smoke tests for domain, persistence, keymap, and renderer flows.
-- `SPEC.md` — TUI design spec: screen states, data model, keybindings.
+- `docs/ARCHITECTURE.md` — stable module boundaries, data flow, and extension rules.
 - The FluidAudio engine is a third-party Apache-2.0 dependency. Clone it outside
   this workspace at `$HOME/Applications/FluidAudio`; it is not committed here.
 
@@ -43,7 +43,7 @@ bun transcribe.ts meeting.mp4
 ```
 
 1. Missing `<stem>.artifacts/asr.json` / `diar.json` → runs the FluidAudio CLI with concise progress output
-2. Opens the OpenTUI/Solid speaker-labeling workflow (SPEC.md): rename
+2. Opens the OpenTUI/Solid speaker-labeling workflow: rename
    speakers, merge split speakers, reassign individual utterances, undo, and
    toggle contextual English filler removal (`f`, enabled by default)
 3. `s` writes `transcript.srt`, `transcript.vtt`, and `labels.json` inside
