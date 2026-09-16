@@ -1,6 +1,6 @@
 # transcriber
 
-Local meeting transcription pipeline for ntcho-mbp. Turns a meeting recording
+Local meeting transcription pipeline. Turns a meeting recording
 (mp4/mov from a screen recorder) into a timestamped, speaker-separated
 transcript (SRT/VTT + Markdown) with 100% local inference.
 
@@ -20,8 +20,8 @@ diarization. Inference runs on-device after the required models are downloaded.
 - `src/tui/app.tsx` — OpenTUI renderer lifecycle and SolidJS presentation tree.
 - `tests/` — Bun smoke tests for domain, persistence, keymap, and renderer flows.
 - `SPEC.md` — TUI design spec: screen states, data model, keybindings.
-- The FluidAudio engine repo is cloned outside the workspace at
-  `~/Applications/FluidAudio` (third-party, Apache-2.0, not committed here).
+- The FluidAudio engine is a third-party Apache-2.0 dependency. Clone it outside
+  this workspace at `$HOME/Applications/FluidAudio`; it is not committed here.
 
 ## Setup
 
@@ -29,13 +29,11 @@ diarization. Inference runs on-device after the required models are downloaded.
 # App dependencies
 bun install
 
-# Engine: already built
-cd ~/Applications/FluidAudio
-swift build -c release --product fluidaudiocli   # ~2 min on M4 Max
+# Engine: clone FluidAudio to $HOME/Applications/FluidAudio, then build it
+cd "$HOME/Applications/FluidAudio"
+swift build -c release --product fluidaudiocli
 
-# Models (pre-downloaded 2026-09-03, 464 MB total):
-#   ~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v2/    (443 MB)
-#   ~/Library/Application Support/FluidAudio/Models/speaker-diarization/     (21 MB)
+# FluidAudio downloads and caches the required models on first use.
 ```
 
 ## Usage
@@ -63,7 +61,7 @@ labels; `s` saves all outputs and exits.
 ## Pipeline internals
 
 ```bash
-BIN=~/Applications/FluidAudio/.build/release/fluidaudiocli
+BIN="$HOME/Applications/FluidAudio/.build/release/fluidaudiocli"
 mkdir -p <base>.artifacts
 
 # ASR with word timestamps (English-only v2)
